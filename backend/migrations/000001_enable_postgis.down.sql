@@ -1,0 +1,4 @@
+-- Intentional no-op.
+-- Do not DROP EXTENSION postgis. Shared platform extensions are destructive
+-- to remove; rolling this migration back must not uninstall PostGIS.
+-- If a forward-fix is required, add a new numbered SQL migration.

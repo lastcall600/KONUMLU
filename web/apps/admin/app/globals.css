@@ -1,0 +1,72 @@
+:root {
+  color-scheme: light;
+  font-family:
+    system-ui,
+    "Segoe UI",
+    "Noto Sans",
+    "Noto Sans Arabic",
+    "Noto Naskh Arabic",
+    sans-serif;
+  line-height: 1.5;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-block-size: 100%;
+}
+
+body {
+  color: #111;
+  background: #f4f4f4;
+}
+
+.shell {
+  display: flex;
+  min-block-size: 100dvh;
+}
+
+.shell-nav {
+  flex: 0 0 14rem;
+  padding-block: 1.25rem;
+  padding-inline: 1rem;
+  border-inline-end: 1px solid #ddd;
+  background: #fff;
+}
+
+.shell-nav h1 {
+  margin: 0 0 1rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.shell-nav ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.shell-nav li {
+  padding-block: 0.4rem;
+  color: #555;
+}
+
+.shell-main {
+  flex: 1;
+  padding-block: 1.5rem;
+  padding-inline: 1.5rem;
+}
+
+.page-status {
+  margin-block: 2rem;
+}
+
+.page-status button {
+  margin-block-start: 0.75rem;
+}

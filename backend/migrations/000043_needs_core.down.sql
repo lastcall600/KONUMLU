@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS needs.needs;
+DROP SCHEMA IF EXISTS needs;

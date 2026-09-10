@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS offers.offers;
+DROP SCHEMA IF EXISTS offers;

@@ -1,0 +1,906 @@
+package httpapi
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"strings"
+
+	"github.com/go-webauthn/webauthn/protocol"
+
+	"backend/internal/identity"
+	"backend/internal/notifications/contracts"
+)
+
+const (
+	sessionCookieName = "__Host-konumlu_session"
+	csrfCookieName    = "__Host-konumlu_csrf"
+	csrfHeaderName    = "X-CSRF-Token"
+	csrfSecretBytes   = 32
+)
+
+type authenticator interface {
+	BeginAuthentication(ctx context.Context) (identity.BeginAuthenticationResult, error)
+	FinishAuthentication(ctx context.Context, in identity.FinishAuthenticationInput) (identity.ID, error)
+}
+
+type sessionManager interface {
+	Create(ctx context.Context, userID identity.ID, deviceID *identity.ID) (identity.IssuedSession, error)
+	Resolve(ctx context.Context, rawToken string) (identity.Session, error)
+	Revoke(ctx context.Context, sessionID identity.ID) error
+}
+
+type identifierResolver interface {
+	ResolveVerified(ctx context.Context, kind identity.IdentifierKind, raw string) (identity.User, error)
+}
+
+type passwordVerifier interface {
+	Verify(ctx context.Context, userID identity.ID, password []byte) (identity.PasswordVerifyResult, error)
+	DummyVerify(password []byte)
+}
+
+type signupVerification interface {
+	StartSignupVerification(ctx context.Context, in identity.StartSignupVerificationInput) (identity.StartSignupVerificationResult, error)
+	FinishSignupVerification(ctx context.Context, in identity.FinishSignupVerificationInput) (identity.FinishSignupVerificationResult, error)
+}
+
+type signupCompletion interface {
+	CompleteSignup(ctx context.Context, in identity.CompleteSignupInput) (identity.CompleteSignupResult, error)
+}
+
+type passwordReset interface {
+	StartPasswordReset(ctx context.Context, in identity.StartPasswordResetInput) (identity.StartPasswordResetResult, error)
+	VerifyPasswordReset(ctx context.Context, in identity.VerifyPasswordResetInput) (identity.VerifyPasswordResetResult, error)
+	CompletePasswordReset(ctx context.Context, in identity.CompletePasswordResetInput) (identity.CompletePasswordResetResult, error)
+}
+
+type passkeyRegistrar interface {
+	BeginRegistration(ctx context.Context, in identity.BeginRegistrationInput) (identity.BeginRegistrationResult, error)
+	FinishRegistration(ctx context.Context, in identity.FinishRegistrationInput) (identity.PasskeyCredential, error)
+}
+
+// Handler is the browser session HTTP adapter. It does not own Identity rules.
+type Handler struct {
+	auth        authenticator
+	sessions    sessionManager
+	identifiers identifierResolver
+	passwords   passwordVerifier
+	signup      signupVerification
+	accounts    signupCompletion
+	reset       passwordReset
+	register    passkeyRegistrar
+	guard       *AbuseGuard
+	origins     map[string]struct{}
+}
+
+func New(auth authenticator, sessions sessionManager, identifiers identifierResolver, passwords passwordVerifier, signup signupVerification, accounts signupCompletion, register passkeyRegistrar, reset passwordReset, allowedOrigins []string, guard *AbuseGuard) (*Handler, error) {
+	if auth == nil || sessions == nil || identifiers == nil || passwords == nil || signup == nil || accounts == nil || register == nil || reset == nil || guard == nil {
+		return nil, identity.ErrUnavailable
+	}
+	origins := make(map[string]struct{}, len(allowedOrigins))
+	for _, origin := range allowedOrigins {
+		origin = strings.TrimSpace(origin)
+		if origin == "" || origin == "*" || strings.Contains(origin, "*") {
+			return nil, identity.ErrUnavailable
+		}
+		origins[origin] = struct{}{}
+	}
+	if len(origins) == 0 {
+		return nil, identity.ErrUnavailable
+	}
+	return &Handler{
+		auth:        auth,
+		sessions:    sessions,
+		identifiers: identifiers,
+		passwords:   passwords,
+		signup:      signup,
+		accounts:    accounts,
+		reset:       reset,
+		register:    register,
+		guard:       guard,
+		origins:     origins,
+	}, nil
+}
+
+func (h *Handler) Register(mux *http.ServeMux) {
+	mux.HandleFunc("POST /v1/auth/passkey/register/begin", h.beginPasskeyRegister)
+	mux.HandleFunc("POST /v1/auth/passkey/register/finish", h.finishPasskeyRegister)
+	mux.HandleFunc("POST /v1/auth/passkey/login/begin", h.beginPasskeyLogin)
+	mux.HandleFunc("POST /v1/auth/passkey/login/finish", h.finishPasskeyLogin)
+	mux.HandleFunc("POST /v1/auth/password/login", h.passwordLogin)
+	mux.HandleFunc("POST /v1/auth/signup/verification/start", h.startSignupVerification)
+	mux.HandleFunc("POST /v1/auth/signup/verification/finish", h.finishSignupVerification)
+	mux.HandleFunc("POST /v1/auth/signup/complete", h.completeSignup)
+	mux.HandleFunc("POST /v1/auth/password/reset/start", h.startPasswordReset)
+	mux.HandleFunc("POST /v1/auth/password/reset/verify", h.verifyPasswordReset)
+	mux.HandleFunc("POST /v1/auth/password/reset/complete", h.completePasswordReset)
+	mux.HandleFunc("GET /v1/auth/session", h.getSession)
+	mux.HandleFunc("POST /v1/auth/logout", h.logout)
+}
+
+func (h *Handler) beginPasskeyRegister(w http.ResponseWriter, r *http.Request) {
+	session, ok := h.requireOriginSessionCSRF(w, r)
+	if !ok {
+		return
+	}
+	var req registerBeginRequest
+	if r.Body != nil && r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request")
+			return
+		}
+	}
+	name, display := registrationLabels(session.UserID, req.Name, req.DisplayName)
+	out, err := h.register.BeginRegistration(r.Context(), identity.BeginRegistrationInput{
+		UserID:      session.UserID,
+		Name:        name,
+		DisplayName: display,
+	})
+	if err != nil {
+		writePasskeyRegisterError(w, err)
+		return
+	}
+	if out.Creation == nil || out.RawToken == "" {
+		writeError(w, http.StatusInternalServerError, "internal")
+		return
+	}
+	writeJSON(w, http.StatusOK, registerBeginResponse{
+		CeremonyToken: out.RawToken,
+		PublicKey:     out.Creation.Response,
+	})
+}
+
+func (h *Handler) finishPasskeyRegister(w http.ResponseWriter, r *http.Request) {
+	session, ok := h.requireOriginSessionCSRF(w, r)
+	if !ok {
+		return
+	}
+	var req finishRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	if strings.TrimSpace(req.CeremonyToken) == "" || len(req.Credential) == 0 {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	if _, err := h.register.FinishRegistration(r.Context(), identity.FinishRegistrationInput{
+		UserID:   session.UserID,
+		RawToken: req.CeremonyToken,
+		Response: req.Credential,
+	}); err != nil {
+		writePasskeyRegisterError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, registerFinishResponse{OK: true})
+}
+
+func registrationLabels(userID identity.ID, name, displayName string) (string, string) {
+	stable := userID.String()
+	name = strings.TrimSpace(name)
+	displayName = strings.TrimSpace(displayName)
+	if name == "" {
+		name = stable
+	}
+	if displayName == "" {
+		displayName = stable
+	}
+	return name, displayName
+}
+
+func (h *Handler) requireOriginSessionCSRF(w http.ResponseWriter, r *http.Request) (identity.Session, bool) {
+	if !h.requireOrigin(w, r) {
+		return identity.Session{}, false
+	}
+	raw, ok := readCookie(r, sessionCookieName)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthenticated")
+		return identity.Session{}, false
+	}
+	session, err := h.sessions.Resolve(r.Context(), raw)
+	if err != nil {
+		writeIdentityError(w, err)
+		return identity.Session{}, false
+	}
+	if !csrfOK(r) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return identity.Session{}, false
+	}
+	return session, true
+}
+
+func (h *Handler) beginPasskeyLogin(w http.ResponseWriter, r *http.Request) {
+	if !h.requireOrigin(w, r) {
+		return
+	}
+	if !h.allowAuthIP(w, r) {
+		return
+	}
+	out, err := h.auth.BeginAuthentication(r.Context())
+	if err != nil {
+		writeIdentityError(w, err)
+		return
+	}
+	if out.Assertion == nil || out.RawToken == "" {
+		writeError(w, http.StatusInternalServerError, "internal")
+		return
+	}
+	writeJSON(w, http.StatusOK, beginResponse{
+		CeremonyToken: out.RawToken,
+		PublicKey:     out.Assertion.Response,
+	})
+}
+
+func (h *Handler) finishPasskeyLogin(w http.ResponseWriter, r *http.Request) {
+	if !h.requireOrigin(w, r) {
+		return
+	}
+	if !h.allowAuthIP(w, r) {
+		return
+	}
+	var req finishRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	if strings.TrimSpace(req.CeremonyToken) == "" || len(req.Credential) == 0 {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+
+	userID, err := h.auth.FinishAuthentication(r.Context(), identity.FinishAuthenticationInput{
+		RawToken: req.CeremonyToken,
+		Response: req.Credential,
+	})
+	if err != nil {
+		writeIdentityError(w, err)
+		return
+	}
+	h.issueBrowserSession(w, r, userID)
+}
+
+func (h *Handler) passwordLogin(w http.ResponseWriter, r *http.Request) {
+	if !h.requireOrigin(w, r) {
+		return
+	}
+	if !h.allowAuthIP(w, r) {
+		return
+	}
+	var req passwordLoginRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	kind := identity.IdentifierKind(strings.TrimSpace(req.Kind))
+	if !kindIsSupported(kind) {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	if strings.TrimSpace(req.Identifier) == "" || req.Password == "" {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	if _, err := identity.CanonicalizeIdentifier(kind, req.Identifier); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+
+	password := []byte(req.Password)
+	user, err := h.identifiers.ResolveVerified(r.Context(), kind, req.Identifier)
+	if err != nil {
+		switch identity.Classify(err) {
+		case identity.FailureUnavailable:
+			writeError(w, http.StatusServiceUnavailable, "unavailable")
+		case identity.FailureUnauthenticated:
+			h.passwords.DummyVerify(password)
+			writeError(w, http.StatusUnauthorized, "unauthenticated")
+		default:
+			writeIdentityError(w, err)
+		}
+		return
+	}
+
+	if !h.allowPasswordUser(w, r, user.ID) {
+		return
+	}
+
+	if _, err := h.passwords.Verify(r.Context(), user.ID, password); err != nil {
+		writeIdentityError(w, err)
+		return
+	}
+	h.issueBrowserSession(w, r, user.ID)
+}
+
+func kindIsSupported(kind identity.IdentifierKind) bool {
+	return kind == identity.IdentifierEmail || kind == identity.IdentifierPhone
+}
+
+func (h *Handler) startSignupVerification(w http.ResponseWriter, r *http.Request) {
+	if !h.requireOrigin(w, r) {
+		return
+	}
+	var req signupStartRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	kind := identity.IdentifierKind(strings.TrimSpace(req.Kind))
+	if !kindIsSupported(kind) {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	if strings.TrimSpace(req.Identifier) == "" {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	if _, err := identity.CanonicalizeIdentifier(kind, req.Identifier); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	if !contracts.ValidLocale(req.Locale) {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	got, err := h.signup.StartSignupVerification(r.Context(), identity.StartSignupVerificationInput{
+		Kind:        kind,
+		Destination: req.Identifier,
+		Locale:      req.Locale,
+		ClientIP:    h.guard.clientIP(r),
+	})
+	if err != nil {
+		writeSignupStartError(w, err)
+		return
+	}
+	if got.ChallengeID.IsZero() {
+		writeError(w, http.StatusServiceUnavailable, "unavailable")
+		return
+	}
+	writeJSON(w, http.StatusOK, signupStartResponse{ChallengeID: got.ChallengeID.String()})
+}
+
+func (h *Handler) finishSignupVerification(w http.ResponseWriter, r *http.Request) {
+	if !h.requireOrigin(w, r) {
+		return
+	}
+	if !h.allowSignupVerifyIP(w, r) {
+		return
+	}
+	var req signupFinishRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	challengeID, err := identity.ParseID(req.ChallengeID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	if strings.TrimSpace(req.Code) == "" {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	got, err := h.signup.FinishSignupVerification(r.Context(), identity.FinishSignupVerificationInput{
+		ChallengeID: challengeID,
+		Code:        req.Code,
+	})
+	if err != nil {
+		writeSignupFinishError(w, err)
+		return
+	}
+	if !got.Verified || got.SignupProof == "" {
+		writeError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	writeJSON(w, http.StatusOK, signupFinishResponse{
+		Verified:    true,
+		SignupProof: got.SignupProof,
+	})
+}
+
+func (h *Handler) completeSignup(w http.ResponseWriter, r *http.Request) {
+	if !h.requireOrigin(w, r) {
+		return
+	}
+	var req signupCompleteRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	if strings.TrimSpace(req.SignupProof) == "" {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	var password []byte
+	if req.Password != "" {
+		if len(req.Password) > identity.MaxPasswordBytes {
+			writeError(w, http.StatusBadRequest, "bad_request")
+			return
+		}
+		password = []byte(req.Password)
+		defer clearBytes(password)
+	}
+	got, err := h.accounts.CompleteSignup(r.Context(), identity.CompleteSignupInput{
+		SignupProof: req.SignupProof,
+		Password:    password,
+	})
+	if err != nil {
+		writeSignupCompleteError(w, err)
+		return
+	}
+	if got.UserID.IsZero() {
+		writeError(w, http.StatusServiceUnavailable, "unavailable")
+		return
+	}
+	h.issueBrowserSession(w, r, got.UserID)
+}
+
+func (h *Handler) startPasswordReset(w http.ResponseWriter, r *http.Request) {
+	if !h.requireOrigin(w, r) {
+		return
+	}
+	var req signupStartRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	kind := identity.IdentifierKind(strings.TrimSpace(req.Kind))
+	if !kindIsSupported(kind) {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	if strings.TrimSpace(req.Identifier) == "" {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	if _, err := identity.CanonicalizeIdentifier(kind, req.Identifier); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	if !contracts.ValidLocale(req.Locale) {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	got, err := h.reset.StartPasswordReset(r.Context(), identity.StartPasswordResetInput{
+		Kind:        kind,
+		Destination: req.Identifier,
+		Locale:      req.Locale,
+		ClientIP:    h.guard.clientIP(r),
+	})
+	if err != nil {
+		writeSignupStartError(w, err)
+		return
+	}
+	if got.ChallengeID.IsZero() {
+		writeError(w, http.StatusServiceUnavailable, "unavailable")
+		return
+	}
+	writeJSON(w, http.StatusOK, signupStartResponse{ChallengeID: got.ChallengeID.String()})
+}
+
+func (h *Handler) verifyPasswordReset(w http.ResponseWriter, r *http.Request) {
+	if !h.requireOrigin(w, r) {
+		return
+	}
+	var req signupFinishRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	challengeID, err := identity.ParseID(req.ChallengeID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	if strings.TrimSpace(req.Code) == "" {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	got, err := h.reset.VerifyPasswordReset(r.Context(), identity.VerifyPasswordResetInput{
+		ChallengeID: challengeID,
+		Code:        req.Code,
+	})
+	if err != nil {
+		writeSignupFinishError(w, err)
+		return
+	}
+	if got.ResetProof == "" {
+		writeError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	writeJSON(w, http.StatusOK, resetVerifyResponse{ResetProof: got.ResetProof})
+}
+
+func (h *Handler) completePasswordReset(w http.ResponseWriter, r *http.Request) {
+	if !h.requireOrigin(w, r) {
+		return
+	}
+	var req resetCompleteRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	if strings.TrimSpace(req.ResetProof) == "" || req.NewPassword == "" {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	if len(req.NewPassword) > identity.MaxPasswordBytes {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	password := []byte(req.NewPassword)
+	defer clearBytes(password)
+	got, err := h.reset.CompletePasswordReset(r.Context(), identity.CompletePasswordResetInput{
+		ResetProof:  req.ResetProof,
+		NewPassword: password,
+	})
+	if err != nil {
+		writeResetCompleteError(w, err)
+		return
+	}
+	if got.UserID.IsZero() {
+		writeError(w, http.StatusServiceUnavailable, "unavailable")
+		return
+	}
+	writeJSON(w, http.StatusOK, resetCompleteResponse{OK: true})
+}
+
+func (h *Handler) issueBrowserSession(w http.ResponseWriter, r *http.Request, userID identity.ID) {
+	issued, err := h.sessions.Create(r.Context(), userID, nil)
+	if err != nil {
+		writeIdentityError(w, err)
+		return
+	}
+	if issued.RawToken == "" {
+		writeError(w, http.StatusInternalServerError, "internal")
+		return
+	}
+	csrf, err := newCSRFToken()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal")
+		return
+	}
+	setSessionCookie(w, issued.RawToken)
+	setCSRFCookie(w, csrf)
+	writeJSON(w, http.StatusOK, authResponse{
+		Authenticated: true,
+		UserID:        userID.String(),
+	})
+}
+
+func (h *Handler) getSession(w http.ResponseWriter, r *http.Request) {
+	raw, ok := readCookie(r, sessionCookieName)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	session, err := h.sessions.Resolve(r.Context(), raw)
+	if err != nil {
+		writeIdentityError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, authResponse{
+		Authenticated: true,
+		UserID:        session.UserID.String(),
+	})
+}
+
+func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
+	if !h.requireOrigin(w, r) {
+		return
+	}
+
+	raw, hasSessionCookie := readCookie(r, sessionCookieName)
+	if hasSessionCookie {
+		session, err := h.sessions.Resolve(r.Context(), raw)
+		switch identity.Classify(err) {
+		case identity.FailureNone:
+			if !csrfOK(r) {
+				writeError(w, http.StatusForbidden, "forbidden")
+				return
+			}
+			if err := h.sessions.Revoke(r.Context(), session.ID); err != nil {
+				writeIdentityError(w, err)
+				return
+			}
+		case identity.FailureUnavailable:
+			writeIdentityError(w, err)
+			return
+		case identity.FailureInternal:
+			writeIdentityError(w, err)
+			return
+		}
+	}
+
+	clearSessionCookie(w)
+	clearCSRFCookie(w)
+	writeJSON(w, http.StatusOK, logoutResponse{OK: true})
+}
+
+func (h *Handler) requireOrigin(w http.ResponseWriter, r *http.Request) bool {
+	if !h.originAllowed(r) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return false
+	}
+	return true
+}
+
+func (h *Handler) allowAuthIP(w http.ResponseWriter, r *http.Request) bool {
+	if err := h.guard.allowIP(r.Context(), r); err != nil {
+		writeLimitError(w, err)
+		return false
+	}
+	return true
+}
+
+func (h *Handler) allowPasswordUser(w http.ResponseWriter, r *http.Request, userID identity.ID) bool {
+	if err := h.guard.allowPasswordUser(r.Context(), userID); err != nil {
+		writeLimitError(w, err)
+		return false
+	}
+	return true
+}
+
+func (h *Handler) allowSignupVerifyIP(w http.ResponseWriter, r *http.Request) bool {
+	if err := h.guard.allowSignupVerifyIP(r.Context(), r); err != nil {
+		writeLimitError(w, err)
+		return false
+	}
+	return true
+}
+
+func (h *Handler) originAllowed(r *http.Request) bool {
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" || origin == "null" {
+		return false
+	}
+	_, ok := h.origins[origin]
+	return ok
+}
+
+type registerBeginRequest struct {
+	Name        string `json:"name"`
+	DisplayName string `json:"displayName"`
+}
+
+type registerBeginResponse struct {
+	CeremonyToken string                                      `json:"ceremonyToken"`
+	PublicKey     protocol.PublicKeyCredentialCreationOptions `json:"publicKey"`
+}
+
+type registerFinishResponse struct {
+	OK bool `json:"ok"`
+}
+
+type beginResponse struct {
+	CeremonyToken string                                     `json:"ceremonyToken"`
+	PublicKey     protocol.PublicKeyCredentialRequestOptions `json:"publicKey"`
+}
+
+type finishRequest struct {
+	CeremonyToken string          `json:"ceremonyToken"`
+	Credential    json.RawMessage `json:"credential"`
+}
+
+type passwordLoginRequest struct {
+	Kind       string `json:"kind"`
+	Identifier string `json:"identifier"`
+	Password   string `json:"password"`
+}
+
+type signupStartRequest struct {
+	Kind       string `json:"kind"`
+	Identifier string `json:"identifier"`
+	Locale     string `json:"locale"`
+}
+
+type signupStartResponse struct {
+	ChallengeID string `json:"challengeId"`
+}
+
+type signupFinishRequest struct {
+	ChallengeID string `json:"challengeId"`
+	Code        string `json:"code"`
+}
+
+type signupFinishResponse struct {
+	Verified    bool   `json:"verified"`
+	SignupProof string `json:"signupProof"`
+}
+
+type signupCompleteRequest struct {
+	SignupProof string `json:"signupProof"`
+	Password    string `json:"password"`
+}
+
+type resetVerifyResponse struct {
+	ResetProof string `json:"resetProof"`
+}
+
+type resetCompleteRequest struct {
+	ResetProof  string `json:"resetProof"`
+	NewPassword string `json:"newPassword"`
+}
+
+type resetCompleteResponse struct {
+	OK bool `json:"ok"`
+}
+
+type authResponse struct {
+	Authenticated bool   `json:"authenticated"`
+	UserID        string `json:"userId"`
+}
+
+type logoutResponse struct {
+	OK bool `json:"ok"`
+}
+
+type errorResponse struct {
+	Error string `json:"error"`
+}
+
+func writePasskeyRegisterError(w http.ResponseWriter, err error) {
+	if errors.Is(err, identity.ErrCredentialConflict) {
+		writeError(w, http.StatusConflict, "conflict")
+		return
+	}
+	switch identity.Classify(err) {
+	case identity.FailureUnavailable:
+		writeError(w, http.StatusServiceUnavailable, "unavailable")
+	case identity.FailureUnauthenticated:
+		writeError(w, http.StatusBadRequest, "bad_request")
+	default:
+		writeError(w, http.StatusInternalServerError, "internal")
+	}
+}
+
+func writeIdentityError(w http.ResponseWriter, err error) {
+	switch identity.Classify(err) {
+	case identity.FailureUnauthenticated:
+		writeError(w, http.StatusUnauthorized, "unauthenticated")
+	case identity.FailureUnavailable:
+		writeError(w, http.StatusServiceUnavailable, "unavailable")
+	default:
+		writeError(w, http.StatusInternalServerError, "internal")
+	}
+}
+
+func writeSignupStartError(w http.ResponseWriter, err error) {
+	if errors.Is(err, identity.ErrChallengeThrottled) {
+		writeError(w, http.StatusTooManyRequests, "rate_limited")
+		return
+	}
+	if errors.Is(err, identity.ErrInvalidChallenge) || errors.Is(err, identity.ErrInvalidIdentifier) {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	writeIdentityError(w, err)
+}
+
+func writeSignupFinishError(w http.ResponseWriter, err error) {
+	switch identity.Classify(err) {
+	case identity.FailureUnauthenticated:
+		writeError(w, http.StatusUnauthorized, "unauthenticated")
+	case identity.FailureUnavailable:
+		writeError(w, http.StatusServiceUnavailable, "unavailable")
+	default:
+		writeError(w, http.StatusUnauthorized, "unauthenticated")
+	}
+}
+
+func writeSignupCompleteError(w http.ResponseWriter, err error) {
+	if errors.Is(err, identity.ErrIdentifierConflict) {
+		writeError(w, http.StatusConflict, "conflict")
+		return
+	}
+	if errors.Is(err, identity.ErrInvalidPassword) || errors.Is(err, identity.ErrPasswordTooLong) {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	switch identity.Classify(err) {
+	case identity.FailureUnauthenticated:
+		writeError(w, http.StatusUnauthorized, "unauthenticated")
+	case identity.FailureUnavailable:
+		writeError(w, http.StatusServiceUnavailable, "unavailable")
+	default:
+		writeError(w, http.StatusUnauthorized, "unauthenticated")
+	}
+}
+
+func writeResetCompleteError(w http.ResponseWriter, err error) {
+	if errors.Is(err, identity.ErrInvalidPassword) || errors.Is(err, identity.ErrPasswordTooLong) {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	switch identity.Classify(err) {
+	case identity.FailureUnauthenticated:
+		writeError(w, http.StatusUnauthorized, "unauthenticated")
+	case identity.FailureUnavailable:
+		writeError(w, http.StatusServiceUnavailable, "unavailable")
+	default:
+		writeError(w, http.StatusUnauthorized, "unauthenticated")
+	}
+}
+
+func clearBytes(b []byte) {
+	for i := range b {
+		b[i] = 0
+	}
+}
+
+func writeLimitError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errRateLimited) {
+		writeError(w, http.StatusTooManyRequests, "rate_limited")
+		return
+	}
+	writeError(w, http.StatusServiceUnavailable, "unavailable")
+}
+
+func writeError(w http.ResponseWriter, status int, code string) {
+	writeJSON(w, status, errorResponse{Error: code})
+}
+
+func writeJSON(w http.ResponseWriter, status int, body any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(body)
+}
+
+func readCookie(r *http.Request, name string) (string, bool) {
+	c, err := r.Cookie(name)
+	if err != nil || c == nil || c.Value == "" {
+		return "", false
+	}
+	return c.Value, true
+}
+
+func setSessionCookie(w http.ResponseWriter, value string) {
+	http.SetCookie(w, hostCookie(sessionCookieName, value, true, 0))
+}
+
+func setCSRFCookie(w http.ResponseWriter, value string) {
+	http.SetCookie(w, hostCookie(csrfCookieName, value, false, 0))
+}
+
+func clearSessionCookie(w http.ResponseWriter) {
+	http.SetCookie(w, hostCookie(sessionCookieName, "", true, -1))
+}
+
+func clearCSRFCookie(w http.ResponseWriter) {
+	http.SetCookie(w, hostCookie(csrfCookieName, "", false, -1))
+}
+
+func hostCookie(name, value string, httpOnly bool, maxAge int) *http.Cookie {
+	return &http.Cookie{
+		Name:     name,
+		Value:    value,
+		Path:     "/",
+		MaxAge:   maxAge,
+		Secure:   true,
+		HttpOnly: httpOnly,
+		SameSite: http.SameSiteLaxMode,
+	}
+}
+
+func newCSRFToken() (string, error) {
+	secret := make([]byte, csrfSecretBytes)
+	if _, err := rand.Read(secret); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(secret), nil
+}
+
+func csrfOK(r *http.Request) bool {
+	cookie, ok := readCookie(r, csrfCookieName)
+	if !ok {
+		return false
+	}
+	header := strings.TrimSpace(r.Header.Get(csrfHeaderName))
+	if header == "" || len(header) != len(cookie) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(header), []byte(cookie)) == 1
+}

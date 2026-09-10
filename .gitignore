@@ -1,0 +1,28 @@
+# Local env and secrets
+.env
+.env.local
+.env.development
+.env.production
+.env.*.local
+*.pem
+*.key
+
+# Dependencies
+node_modules/
+
+# Frontend build / cache
+.next/
+out/
+dist/
+*.tsbuildinfo
+
+# Go build / test artifacts
+*.exe
+*.test
+coverage.out
+coverage/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/

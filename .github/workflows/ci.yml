@@ -1,0 +1,156 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: backend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Test
+        run: go -C backend test ./...
+
+      - name: Architecture check
+        run: go -C backend run ./cmd/archcheck
+
+  consumer:
+    name: consumer-web
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web/apps/consumer
+    env:
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8080
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/apps/consumer/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Production build
+        run: npm run build
+
+  admin:
+    name: admin-web
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web/apps/admin
+    env:
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8080
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/apps/admin/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Production build
+        run: npm run build
+
+  migration-smoke:
+    name: migration-smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Fresh PostGIS sidecar (compose pin postgis/postgis:16-3.5). 000001 CREATE EXTENSION
+    # postgis and later geography columns fail without the extension.
+    services:
+      postgres:
+        image: postgis/postgis:16-3.5
+        env:
+          POSTGRES_USER: konumlu
+          POSTGRES_PASSWORD: konumlu
+          POSTGRES_DB: konumlu
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U konumlu -d konumlu"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://konumlu:konumlu@127.0.0.1:5432/konumlu?sslmode=disable
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Apply migrations
+        run: go -C backend run ./cmd/migrate up
+
+      - name: Verify migration version
+        run: |
+          set -euo pipefail
+          version="$(go -C backend run ./cmd/migrate version)"
+          if [[ "$version" == *"dirty"* ]]; then
+            echo "dirty migration state: ${version}"
+            exit 1
+          fi
+          if [[ "$version" == "none" || -z "$version" ]]; then
+            echo "expected applied version, got: ${version}"
+            exit 1
+          fi
+          latest="$(find backend/migrations -maxdepth 1 -name '*.up.sql' -printf '%f\n' | sed -E 's/^([0-9]+).*/\1/' | sort -n | tail -1)"
+          latest_num=$((10#$latest))
+          if [[ "$version" != "$latest_num" ]]; then
+            echo "applied version ${version} does not match latest migration ${latest_num}"
+            exit 1
+          fi
+          echo "migration version ${version} (latest)"
+
+  backend-container:
+    name: backend-container
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Same Dockerfile; COMMAND selects cmd/server vs cmd/worker (distinct binaries).
+      - name: Build backend server image
+        run: docker build -f backend/Dockerfile --build-arg COMMAND=server -t konumlu-backend:ci-server backend
+
+      - name: Build backend worker image
+        run: docker build -f backend/Dockerfile --build-arg COMMAND=worker -t konumlu-backend:ci-worker backend

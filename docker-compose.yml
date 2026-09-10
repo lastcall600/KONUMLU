@@ -1,0 +1,34 @@
+services:
+  postgres:
+    image: postgis/postgis:16-3.5
+    container_name: konumlu-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-konumlu}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-konumlu}
+      POSTGRES_DB: ${POSTGRES_DB:-konumlu}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - konumlu_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # Derived store only (D-005). No named volume: data is disposable/rebuildable.
+  valkey:
+    image: valkey/valkey:8.1.10-alpine
+    container_name: konumlu-valkey
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  konumlu_postgres_data:

@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS eids.verifications;
+DROP SCHEMA IF EXISTS eids;
