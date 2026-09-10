@@ -323,7 +323,7 @@ type staffRoutes struct {
 }
 
 func newStaffAuthorizer(cfg config.Config) (staffauthcontracts.Authorizer, error) {
-	provider, err := staffidp.Bind(cfg.StaffIDP, nil)
+	provider, err := staffidp.Resolve(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -608,8 +608,9 @@ func newModerationHTTP(pool *db.Pool, cfg config.Config, sessions *identity.Sess
 }
 
 // Staff Moderation/Dispute HTTP is registered only when a StaffIdentityProvider
-// adapter is wired. Missing/partial STAFF_IDP config keeps routes unavailable.
-// There is no fake staff login and no consumer-session fallback.
+// adapter is wired. Missing STAFF_IDP keeps routes unavailable. Complete STAFF_IDP
+// without a vendor adapter fails closed. STAFF_DEV_IDP is development/test only
+// and cannot activate in staging/production. There is no consumer-session fallback.
 
 type identityModerationSessions struct {
 	sessions *identity.Sessions

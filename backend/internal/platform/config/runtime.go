@@ -148,6 +148,9 @@ func applyRuntimeGates(cfg *Config) error {
 	if cfg.AllowInsecureCookies && cfg.ProductionLike() {
 		return fmt.Errorf("%s is a development-only setting", envAllowInsecureCookies)
 	}
+	if cfg.ProductionLike() && !cfg.StaffDevIDP.Empty() {
+		return fmt.Errorf("%s is a development-only setting", envStaffDevIDPEnabled)
+	}
 	if !cfg.ProductionLike() {
 		return nil
 	}

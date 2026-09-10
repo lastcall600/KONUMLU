@@ -64,6 +64,10 @@ const (
 	envStaffIDPIssuer               = "STAFF_IDP_ISSUER"
 	envStaffIDPAudience             = "STAFF_IDP_AUDIENCE"
 	envStaffIDPJWKSURL              = "STAFF_IDP_JWKS_URL"
+	envStaffDevIDPEnabled          = "STAFF_DEV_IDP_ENABLED"
+	envStaffDevIDPToken            = "STAFF_DEV_IDP_TOKEN"
+	envStaffDevIDPStaffID          = "STAFF_DEV_IDP_STAFF_ID"
+	envStaffDevIDPRoles           = "STAFF_DEV_IDP_ROLES"
 	materialAESKeySize              = 32
 
 	NotificationChannelDisabled = "disabled"
@@ -126,6 +130,9 @@ type Config struct {
 	// unregistered. A vendor adapter is still required at wiring; there is no
 	// local fake-admin login and no consumer-session fallback.
 	StaffIDP StaffIDP
+	// StaffDevIDP is an explicit development/test Staff IAM fixture. It is never
+	// a production fallback and must stay empty in staging/production.
+	StaffDevIDP StaffDevIDP
 }
 
 // StaffIDP holds issuer/audience/JWKS for a future staff identity adapter.
@@ -141,6 +148,23 @@ func (s StaffIDP) Empty() bool {
 
 func (s StaffIDP) Complete() bool {
 	return s.Issuer != "" && s.Audience != "" && s.JWKSURL != ""
+}
+
+// StaffDevIDP is a runtime-only development Staff Identity Provider fixture.
+// Token must never be logged. Roles and staff ID are server-authoritative.
+type StaffDevIDP struct {
+	Enabled bool
+	Token   string
+	StaffID string
+	Roles   []string
+}
+
+func (s StaffDevIDP) Empty() bool {
+	return !s.Enabled && s.Token == "" && s.StaffID == "" && len(s.Roles) == 0
+}
+
+func (s StaffDevIDP) Complete() bool {
+	return s.Enabled && s.Token != "" && s.StaffID != "" && len(s.Roles) > 0
 }
 
 // Load reads configuration from environment variables.
@@ -372,11 +396,40 @@ func Load() (Config, error) {
 	}
 	cfg.StaffIDP = staffIDP
 
+	staffDevIDP, err := parseStaffDevIDP()
+	if err != nil {
+		return Config{}, err
+	}
+	if !staffDevIDP.Empty() && !staffIDP.Empty() {
+		return Config{}, fmt.Errorf("%s cannot be combined with STAFF_IDP_*", envStaffDevIDPEnabled)
+	}
+	cfg.StaffDevIDP = staffDevIDP
+
 	if err := applyRuntimeGates(&cfg); err != nil {
 		return Config{}, err
 	}
 
 	return cfg, nil
+}
+
+func parseStaffDevIDP() (StaffDevIDP, error) {
+	enabled, err := parseOptionalBool(envStaffDevIDPEnabled)
+	if err != nil {
+		return StaffDevIDP{}, err
+	}
+	dev := StaffDevIDP{
+		Enabled: enabled,
+		Token:   strings.TrimSpace(os.Getenv(envStaffDevIDPToken)),
+		StaffID: strings.TrimSpace(os.Getenv(envStaffDevIDPStaffID)),
+		Roles:   splitCommaList(os.Getenv(envStaffDevIDPRoles)),
+	}
+	if dev.Empty() {
+		return StaffDevIDP{}, nil
+	}
+	if !dev.Complete() {
+		return StaffDevIDP{}, fmt.Errorf("%s, %s, %s, and %s must all be set together", envStaffDevIDPEnabled, envStaffDevIDPToken, envStaffDevIDPStaffID, envStaffDevIDPRoles)
+	}
+	return dev, nil
 }
 
 func parseOptionalBool(name string) (bool, error) {

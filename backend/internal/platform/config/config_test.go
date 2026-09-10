@@ -128,6 +128,9 @@ func TestLoadDefaults(t *testing.T) {
 	if !cfg.StaffIDP.Empty() {
 		t.Fatalf("StaffIDP = %+v, want empty", cfg.StaffIDP)
 	}
+	if !cfg.StaffDevIDP.Empty() {
+		t.Fatalf("StaffDevIDP = %+v, want empty", cfg.StaffDevIDP)
+	}
 }
 
 func TestLoadFromEnvironment(t *testing.T) {
@@ -376,5 +379,80 @@ func TestLoadStaffIDPComplete(t *testing.T) {
 	}
 	if !cfg.StaffIDP.Complete() || cfg.StaffIDP.Issuer != "https://idp.example.test" {
 		t.Fatalf("StaffIDP = %+v", cfg.StaffIDP)
+	}
+}
+
+func TestLoadStaffDevIDPCompleteInDevelopment(t *testing.T) {
+	t.Setenv(envDatabaseURL, "postgres://konumlu:konumlu@127.0.0.1:5432/konumlu?sslmode=disable")
+	t.Setenv(envSessionIdle, "1h")
+	t.Setenv(envSessionAbsolute, "24h")
+	t.Setenv(envWebAuthnCeremonyTTL, "2m")
+	setAuthRateLimitEnv(t)
+	setVerificationSignupEnv(t)
+	setOutboxEnv(t)
+	setMaterialKeyEnv(t)
+	t.Setenv(envStaffDevIDPEnabled, "true")
+	t.Setenv(envStaffDevIDPToken, "local-dev-staff-token")
+	t.Setenv(envStaffDevIDPStaffID, "11111111-1111-4111-8111-111111111111")
+	t.Setenv(envStaffDevIDPRoles, "moderator")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.StaffDevIDP.Complete() || cfg.StaffDevIDP.StaffID != "11111111-1111-4111-8111-111111111111" {
+		t.Fatalf("StaffDevIDP = %+v", cfg.StaffDevIDP)
+	}
+	if strings.Contains(cfg.String(), "local-dev-staff-token") {
+		t.Fatalf("String leaked token: %s", cfg.String())
+	}
+}
+
+func TestLoadStaffDevIDPPartialFailsClosed(t *testing.T) {
+	t.Setenv(envDatabaseURL, "postgres://konumlu:konumlu@127.0.0.1:5432/konumlu?sslmode=disable")
+	t.Setenv(envSessionIdle, "1h")
+	t.Setenv(envSessionAbsolute, "24h")
+	t.Setenv(envWebAuthnCeremonyTTL, "2m")
+	setAuthRateLimitEnv(t)
+	setVerificationSignupEnv(t)
+	setOutboxEnv(t)
+	setMaterialKeyEnv(t)
+	t.Setenv(envStaffDevIDPEnabled, "true")
+	t.Setenv(envStaffDevIDPToken, "")
+	t.Setenv(envStaffDevIDPStaffID, "")
+	t.Setenv(envStaffDevIDPRoles, "")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected incomplete STAFF_DEV_IDP error")
+	}
+}
+
+func TestLoadStaffDevIDPRejectedInProduction(t *testing.T) {
+	setProductionRequiredEnv(t)
+	t.Setenv(envStaffDevIDPEnabled, "true")
+	t.Setenv(envStaffDevIDPToken, "local-dev-staff-token")
+	t.Setenv(envStaffDevIDPStaffID, "11111111-1111-4111-8111-111111111111")
+	t.Setenv(envStaffDevIDPRoles, "admin")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected production STAFF_DEV_IDP rejection")
+	}
+}
+
+func TestLoadStaffDevIDPCannotCombineWithStaffIDP(t *testing.T) {
+	t.Setenv(envDatabaseURL, "postgres://konumlu:konumlu@127.0.0.1:5432/konumlu?sslmode=disable")
+	t.Setenv(envSessionIdle, "1h")
+	t.Setenv(envSessionAbsolute, "24h")
+	t.Setenv(envWebAuthnCeremonyTTL, "2m")
+	setAuthRateLimitEnv(t)
+	setVerificationSignupEnv(t)
+	setOutboxEnv(t)
+	setMaterialKeyEnv(t)
+	t.Setenv(envStaffIDPIssuer, "https://idp.example.test")
+	t.Setenv(envStaffIDPAudience, "konumlu-staff")
+	t.Setenv(envStaffIDPJWKSURL, "https://idp.example.test/jwks")
+	t.Setenv(envStaffDevIDPEnabled, "true")
+	t.Setenv(envStaffDevIDPToken, "local-dev-staff-token")
+	t.Setenv(envStaffDevIDPStaffID, "11111111-1111-4111-8111-111111111111")
+	t.Setenv(envStaffDevIDPRoles, "moderator")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected combined staff IdP error")
 	}
 }
