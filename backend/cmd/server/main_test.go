@@ -20,7 +20,12 @@ import (
 	disputeshttp "backend/internal/disputes/httpapi"
 	"backend/internal/eids"
 	"backend/internal/identity"
+	identitycontracts "backend/internal/identity/contracts"
 	eidsadapter "backend/internal/infrastructure/eids"
+	staffidp "backend/internal/infrastructure/staffidp"
+	listingcontracts "backend/internal/listings/contracts"
+	"backend/internal/moderation"
+	moderationhttp "backend/internal/moderation/httpapi"
 	"backend/internal/needs"
 	needshttp "backend/internal/needs/httpapi"
 	"backend/internal/offers"
@@ -526,6 +531,115 @@ func TestStaffAuthorizerUnconfiguredAndConfiguredWithoutAdapter(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected fail-closed adapter required")
 	}
+}
+
+func TestStaffAuthorizerProductionRejectsDevAdapter(t *testing.T) {
+	staffID, err := staffauthcontracts.NewID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev := config.StaffDevIDP{
+		Enabled: true,
+		Token:   "local-dev-staff-token",
+		StaffID: staffID.String(),
+		Roles:   []string{"moderator"},
+	}
+	_, err = newStaffAuthorizer(config.Config{Environment: config.EnvProduction, StaffDevIDP: dev})
+	if !errors.Is(err, staffidp.ErrDevForbidden) {
+		t.Fatalf("production err=%v", err)
+	}
+	_, err = newStaffAuthorizer(config.Config{Environment: config.EnvStaging, StaffDevIDP: dev})
+	if !errors.Is(err, staffidp.ErrDevForbidden) {
+		t.Fatalf("staging err=%v", err)
+	}
+}
+
+func TestStaffDevAuthorizerQueueRoute(t *testing.T) {
+	staffID, err := staffauthcontracts.NewID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	authz, err := newStaffAuthorizer(config.Config{
+		Environment: config.EnvDevelopment,
+		StaffDevIDP: config.StaffDevIDP{
+			Enabled: true,
+			Token:   "local-dev-staff-token",
+			StaffID: staffID.String(),
+			Roles:   []string{"moderator"},
+		},
+	})
+	if err != nil || authz == nil {
+		t.Fatalf("authz=%v err=%v", authz, err)
+	}
+	svc, err := moderation.NewService(moderation.NewMemoryStore(), staffTestListings{}, staffTestProfiles{}, moderation.DefaultPolicy(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sh, err := moderationhttp.NewStaff(authz, svc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := newMux(func(ctx context.Context) error { return nil }, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, staffRoutes{moderation: sh})
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/staff/moderation/reports", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/v1/staff/moderation/reports", nil)
+	req.AddCookie(&http.Cookie{Name: "__Host-konumlu_session", Value: "consumer"})
+	req.Header.Set("X-Staff-Role", "admin")
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("consumer session status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/v1/staff/moderation/reports", nil)
+	req.Header.Set("Authorization", "Bearer wrong-token")
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("invalid token status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/v1/staff/moderation/reports", nil)
+	req.Header.Set("Authorization", "Bearer local-dev-staff-token")
+	req.Header.Set("X-Staff-Role", "admin")
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("authenticated status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"reports"`) {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+type staffTestListings struct{}
+
+func (staffTestListings) ResolveListingOwner(context.Context, listingcontracts.ID) (listingcontracts.ListingRef, error) {
+	return listingcontracts.ListingRef{}, listingcontracts.ErrNotFound
+}
+
+func (staffTestListings) AssertListingOwnedBy(context.Context, listingcontracts.ID, listingcontracts.ID) error {
+	return listingcontracts.ErrNotFound
+}
+
+type staffTestProfiles struct{}
+
+func (staffTestProfiles) ResolveByPublicID(context.Context, identitycontracts.ID) (identitycontracts.PublicProfile, error) {
+	return identitycontracts.PublicProfile{}, identitycontracts.ErrNotFound
+}
+
+func (staffTestProfiles) ResolveByUserID(context.Context, identitycontracts.ID) (identitycontracts.PublicProfile, error) {
+	return identitycontracts.PublicProfile{}, identitycontracts.ErrNotFound
+}
+
+func (staffTestProfiles) ResolveUserIDByPublicID(context.Context, identitycontracts.ID) (identitycontracts.ID, error) {
+	return identitycontracts.ID{}, identitycontracts.ErrNotFound
 }
 
 func TestStaffDisputeRoutesRegisteredWhenAuthorizerPresent(t *testing.T) {

@@ -17,12 +17,13 @@ var (
 	ErrAdapterRequired = errAdapterRequired
 )
 
-// Bind returns a staff IdentityProvider for production wiring.
+// Bind returns a staff IdentityProvider for production OIDC wiring.
 //
 // Empty STAFF_IDP_* config: no provider (staff routes stay unregistered).
 // Partial config: fail closed.
 // Complete config: a registered adapter is required. No vendor is selected yet,
 // so production passes a nil adapter and wiring fails closed.
+// Development fixtures must use Resolve, not this function.
 func Bind(cfg config.StaffIDP, adapter contracts.IdentityProvider) (contracts.IdentityProvider, error) {
 	if cfg.Empty() {
 		if adapter != nil {

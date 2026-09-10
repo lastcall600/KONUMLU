@@ -224,4 +224,7 @@ func TestStaffIDPAbsenceIsNotAProductionConfigError(t *testing.T) {
 	if !cfg.StaffIDP.Empty() {
 		t.Fatalf("staff idp = %+v", cfg.StaffIDP)
 	}
+	if !cfg.StaffDevIDP.Empty() {
+		t.Fatalf("staff dev idp = %+v", cfg.StaffDevIDP)
+	}
 }
