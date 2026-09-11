@@ -9,16 +9,24 @@ on:
 permissions:
   contents: read
 
+env:
+  GITLEAKS_VERSION: "8.30.1"
+  GITLEAKS_LINUX_X64_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+  TRIVY_VERSION: "0.74.0"
+  TRIVY_LINUX_64BIT_SHA256: "2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a"
+  SYFT_VERSION: "1.51.1"
+  SYFT_LINUX_AMD64_SHA256: "8fcb33017a0dc1058298c923c436d19dfa68ae93968e0b423248542e3afb9fc3"
+
 jobs:
   backend:
     name: backend
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
@@ -39,10 +47,10 @@ jobs:
       NEXT_PUBLIC_API_BASE_URL: http://localhost:8080
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "20"
           cache: npm
@@ -67,10 +75,10 @@ jobs:
       NEXT_PUBLIC_API_BASE_URL: http://localhost:8080
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "20"
           cache: npm
@@ -109,10 +117,10 @@ jobs:
       DATABASE_URL: postgres://konumlu:konumlu@127.0.0.1:5432/konumlu?sslmode=disable
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
@@ -146,7 +154,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       # Same Dockerfile; COMMAND selects cmd/server vs cmd/worker (distinct binaries).
       - name: Build backend server image
@@ -154,3 +162,178 @@ jobs:
 
       - name: Build backend worker image
         run: docker build -f backend/Dockerfile --build-arg COMMAND=worker -t konumlu-backend:ci-worker backend
+
+  dependency-security:
+    name: dependency-security
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+
+      - name: Go vulnerability scan (govulncheck)
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          govulncheck -json ./... > "${GITHUB_WORKSPACE}/govulncheck.jsonl" || true
+          go run "${GITHUB_WORKSPACE}/.github/security/check_govulncheck.go" \
+            "${GITHUB_WORKSPACE}/govulncheck.jsonl" \
+            "${GITHUB_WORKSPACE}/.github/security/govulncheck-known.txt"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "20"
+
+      - name: npm audit consumer lockfile
+        working-directory: web/apps/consumer
+        run: npm audit --package-lock-only --audit-level=high
+
+      - name: npm audit admin lockfile
+        working-directory: web/apps/admin
+        run: npm audit --package-lock-only --audit-level=high
+
+  secret-scan:
+    name: secret-scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Install Gitleaks
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_LINUX_X64_SHA256}  /tmp/gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+          sudo install -m 0755 /tmp/gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
+      - name: Prove scanner detects a fixture
+        run: |
+          set -euo pipefail
+          probe="$(mktemp -d)"
+          # Harmless private-key armor with non-secret filler; never committed.
+          printf '%s\n' '-----BEGIN RSA PRIVATE KEY-----' 'MIIEowIBAAKCAQEA4f5y7q2n8p0v1s3t5u7w9x2y4z6a8b0c1d3e5f7g9h1j3k5' '-----END RSA PRIVATE KEY-----' > "${probe}/probe.txt"
+          if gitleaks detect --config .gitleaks.toml --source "${probe}" --no-git --redact --exit-code 1; then
+            echo "gitleaks did not fail on the probe fixture" >&2
+            exit 1
+          fi
+
+      - name: Scan repository history
+        run: gitleaks detect --config .gitleaks.toml --source . --redact --exit-code 1 --verbose
+
+  authorization-security:
+    name: authorization-security
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Staff IAM and fail-closed tests
+        run: |
+          go -C backend test ./internal/staffauth/... ./internal/infrastructure/staffidp/... ./cmd/server/ -count=1
+
+      - name: High-risk authorization HTTP tests
+        run: |
+          go -C backend test ./internal/listings/httpapi/ ./internal/identity/publicprofile/ ./internal/moderation/httpapi/ ./internal/trust/httpapi/ ./internal/disputes/httpapi/ ./internal/transactions/httpapi/ ./internal/verified/httpapi/ ./internal/media/httpapi/ ./internal/payments/httpapi/ -count=1
+
+  container-security:
+    name: container-security
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Build backend server image
+        run: docker build -f backend/Dockerfile --build-arg COMMAND=server -t konumlu-backend:ci-server backend
+
+      - name: Build backend worker image
+        run: docker build -f backend/Dockerfile --build-arg COMMAND=worker -t konumlu-backend:ci-worker backend
+
+      - name: Install Trivy
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/trivy.tar.gz \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          echo "${TRIVY_LINUX_64BIT_SHA256}  /tmp/trivy.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/trivy.tar.gz -C /tmp trivy
+          sudo install -m 0755 /tmp/trivy /usr/local/bin/trivy
+          trivy --version
+
+      - name: Scan server image (fail on new fixed CRITICAL)
+        run: |
+          mkdir -p security-reports
+          trivy image --ignorefile .trivyignore --severity CRITICAL --ignore-unfixed --exit-code 1 --format json \
+            --output security-reports/trivy-server-critical.json konumlu-backend:ci-server
+          trivy image --ignorefile .trivyignore --severity HIGH,MEDIUM,LOW --format table konumlu-backend:ci-server \
+            | tee security-reports/trivy-server-all.txt
+
+      - name: Scan worker image (fail on new fixed CRITICAL)
+        run: |
+          mkdir -p security-reports
+          trivy image --ignorefile .trivyignore --severity CRITICAL --ignore-unfixed --exit-code 1 --format json \
+            --output security-reports/trivy-worker-critical.json konumlu-backend:ci-worker
+          trivy image --ignorefile .trivyignore --severity HIGH,MEDIUM,LOW --format table konumlu-backend:ci-worker \
+            | tee security-reports/trivy-worker-all.txt
+
+      - name: Upload container scan reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: container-security-reports
+          path: security-reports/
+          if-no-files-found: warn
+
+  sbom:
+    name: sbom
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install Syft
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/syft.tar.gz \
+            "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.tar.gz"
+          echo "${SYFT_LINUX_AMD64_SHA256}  /tmp/syft.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/syft.tar.gz -C /tmp syft
+          sudo install -m 0755 /tmp/syft /usr/local/bin/syft
+          syft version
+
+      - name: Generate CycloneDX SBOMs
+        run: |
+          set -euo pipefail
+          mkdir -p sbom
+          syft dir:backend --exclude '**/.git/**' -o cyclonedx-json=sbom/backend.cdx.json
+          syft dir:web/apps/consumer --exclude '**/node_modules/**' --exclude '**/.next/**' -o cyclonedx-json=sbom/consumer.cdx.json
+          syft dir:web/apps/admin --exclude '**/node_modules/**' --exclude '**/.next/**' -o cyclonedx-json=sbom/admin.cdx.json
+          test -s sbom/backend.cdx.json
+          test -s sbom/consumer.cdx.json
+          test -s sbom/admin.cdx.json
+
+      - name: Upload SBOM artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sbom-cyclonedx
+          path: sbom/*.cdx.json
+          if-no-files-found: error

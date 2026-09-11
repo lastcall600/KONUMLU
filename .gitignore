@@ -26,3 +26,9 @@ coverage/
 .DS_Store
 Thumbs.db
 .idea/
+
+# Local scanner / SBOM output (CI uploads artifacts; do not commit)
+security-reports/
+sbom/
+govulncheck.jsonl
+govulncheck-db.jsonl

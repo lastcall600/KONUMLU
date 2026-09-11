@@ -1,0 +1,5 @@
+# Known reachable govulncheck findings deferred from 0C-07.
+# Remediation is a dependency upgrade and requires a separate authorized task.
+# Any ID not listed here fails CI.
+GO-2026-5970
+GO-2026-5004
