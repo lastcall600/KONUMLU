@@ -15,7 +15,7 @@ const NAV_ITEMS: readonly NavItem[] = [
   { label: "Companies" },
   { label: "Trust" },
   { label: "Moderation", href: "/moderation" },
-  { label: "Cases" },
+  { label: "Cases", href: "/cases" },
   { label: "Finance" },
   { label: "Compliance" },
   { label: "Platform" },

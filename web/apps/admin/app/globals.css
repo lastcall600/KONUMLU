@@ -184,6 +184,53 @@ body {
   color: #555;
 }
 
+.status-open {
+  border-color: #5c7ac4;
+}
+
+.status-investigating {
+  border-color: #c48a5c;
+}
+
+.status-resolved {
+  border-color: #5c9c6a;
+}
+
+.priority-low {
+  border-color: #8a8a8a;
+}
+
+.priority-normal {
+  border-color: #5c7ac4;
+}
+
+.priority-high {
+  border-color: #c48a5c;
+}
+
+.priority-urgent {
+  border-color: #c45c5c;
+}
+
+.ops-section {
+  margin: 0 0 1rem;
+}
+
+.ops-section h2 {
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
+}
+
+.ops-id-list {
+  margin: 0;
+  padding-inline-start: 1.1rem;
+  font-size: 0.8125rem;
+}
+
+.ops-id-list a {
+  color: inherit;
+}
+
 .ops-pager {
   display: flex;
   gap: 0.5rem;
