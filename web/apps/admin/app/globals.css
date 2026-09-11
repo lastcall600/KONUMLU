@@ -195,6 +195,87 @@ body {
   font-size: 0.8125rem;
 }
 
+.ops-table a {
+  color: inherit;
+}
+
+.ops-back {
+  margin: 0 0 0.5rem;
+  font-size: 0.8125rem;
+}
+
+.ops-back a {
+  color: inherit;
+}
+
+.ops-fields {
+  margin: 0 0 1rem;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid #ddd;
+  background: #fff;
+  display: grid;
+  grid-template-columns: minmax(8rem, 12rem) 1fr;
+  gap: 0.35rem 0.75rem;
+}
+
+.ops-field {
+  display: contents;
+}
+
+.ops-field dt {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #555;
+}
+
+.ops-field dd {
+  margin: 0;
+  font-size: 0.8125rem;
+  overflow-wrap: anywhere;
+}
+
+.ops-action {
+  max-inline-size: 28rem;
+  padding: 0.65rem;
+  border: 1px solid #ddd;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.ops-action h2 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.ops-action p {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: #555;
+}
+
+.ops-action label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #444;
+}
+
+.ops-action select,
+.ops-action textarea,
+.ops-action button {
+  font: inherit;
+  font-weight: 400;
+  font-size: 0.8125rem;
+}
+
+.ops-action textarea {
+  resize: vertical;
+}
+
 @media (max-width: 48rem) {
   .shell {
     flex-direction: column;
