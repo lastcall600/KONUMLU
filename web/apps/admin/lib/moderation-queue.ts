@@ -90,14 +90,35 @@ export function filtersToSearchParams(filters: QueueFilters, cursor: string): UR
   return params;
 }
 
+export async function fetchReportsForTarget(
+  targetType: string,
+  targetId: string,
+  signal?: AbortSignal,
+): Promise<QueueLoadResult> {
+  return fetchModerationQueue(
+    {
+      ...DEFAULT_QUEUE_FILTERS,
+      targetType,
+      limit: 20,
+    },
+    "",
+    signal,
+    targetId,
+  );
+}
+
 export async function fetchModerationQueue(
   filters: QueueFilters,
   cursor: string,
   signal?: AbortSignal,
+  targetId?: string,
 ): Promise<QueueLoadResult> {
   const params = filtersToSearchParams(filters, cursor);
   params.set("order", filters.order);
   params.set("limit", String(filters.limit));
+  if (targetId) {
+    params.set("targetId", targetId);
+  }
   const query = params.toString();
   const path = query ? `/moderation/reports?${query}` : "/moderation/reports";
   let res: Response;

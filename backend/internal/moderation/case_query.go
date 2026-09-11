@@ -120,5 +120,8 @@ func matchesCaseFilters(row Case, q CaseQuery) bool {
 	if q.SubjectType != nil && row.SubjectType != *q.SubjectType {
 		return false
 	}
+	if q.SubjectID != nil && row.SubjectID != *q.SubjectID {
+		return false
+	}
 	return true
 }

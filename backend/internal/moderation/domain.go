@@ -294,6 +294,7 @@ func NormalizeStaffNote(raw string) (*string, error) {
 type QueueQuery struct {
 	Status     *Status
 	TargetType *TargetType
+	TargetID   *ID
 	ReasonCode *ReasonCode
 	Order      QueueOrder
 	Cursor     string

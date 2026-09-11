@@ -14,6 +14,7 @@ import {
   type StaffAction,
 } from "@/lib/moderation-actions";
 import { fetchCaseAppeals, type StaffAppeal } from "@/lib/moderation-appeals";
+import { TargetLink } from "@/components/TargetLink";
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -164,7 +165,7 @@ export function ActionDetail({ caseId, actionId }: { caseId: string; actionId: s
             </Field>
             <Field label="Hedef türü">{action.targetType}</Field>
             <Field label="Hedef">
-              <code>{action.targetId}</code>
+              <TargetLink type={action.targetType} id={action.targetId} />
             </Field>
             <Field label="Tür">{action.actionType}</Field>
             <Field label="Durum">

@@ -132,6 +132,9 @@ func matchesQueueFilters(row Report, q QueueQuery) bool {
 	if q.TargetType != nil && row.TargetType != *q.TargetType {
 		return false
 	}
+	if q.TargetID != nil && row.TargetID != *q.TargetID {
+		return false
+	}
 	if q.ReasonCode != nil && row.ReasonCode != *q.ReasonCode {
 		return false
 	}

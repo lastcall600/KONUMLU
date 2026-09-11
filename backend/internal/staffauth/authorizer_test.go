@@ -36,6 +36,12 @@ func TestDefaultPolicyRolePermissions(t *testing.T) {
 	if policy.Allows(support, contracts.PermModerationCaseRead) {
 		t.Fatal("support must not read moderation cases")
 	}
+	if policy.Allows(support, contracts.PermIdentityProfileRead) || policy.Allows(support, contracts.PermListingsRead) {
+		t.Fatal("support must not read identity/listings 360")
+	}
+	if !policy.Allows(moderator, contracts.PermIdentityProfileRead) || !policy.Allows(moderator, contracts.PermListingsRead) {
+		t.Fatal("moderator should read identity/listings 360")
+	}
 	if !policy.Allows(support, contracts.PermDisputesReview) {
 		t.Fatal("support should review disputes")
 	}

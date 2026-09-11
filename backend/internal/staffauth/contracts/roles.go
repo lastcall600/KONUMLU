@@ -31,13 +31,17 @@ const (
 	PermModerationAppealReview  Permission = "moderation.appeal.review"
 	PermDisputesRead            Permission = "disputes.read"
 	PermDisputesReview          Permission = "disputes.review"
+	PermIdentityProfileRead     Permission = "identity.profile.read"
+	PermListingsRead            Permission = "listings.read"
+	PermTrustRead               Permission = "trust.read"
 )
 
 func ParsePermission(raw string) (Permission, bool) {
 	switch Permission(raw) {
 	case PermModerationReportRead, PermModerationCaseRead, PermModerationCaseWrite,
 		PermModerationActionApprove, PermModerationAppealReview,
-		PermDisputesRead, PermDisputesReview:
+		PermDisputesRead, PermDisputesReview,
+		PermIdentityProfileRead, PermListingsRead, PermTrustRead:
 		return Permission(raw), true
 	default:
 		return "", false
@@ -51,6 +55,9 @@ var RolePermissions = map[Role][]Permission{
 		PermModerationReportRead,
 		PermModerationCaseRead,
 		PermModerationCaseWrite,
+		PermIdentityProfileRead,
+		PermListingsRead,
+		PermTrustRead,
 	},
 	RoleSeniorModerator: {
 		PermModerationReportRead,
@@ -58,6 +65,9 @@ var RolePermissions = map[Role][]Permission{
 		PermModerationCaseWrite,
 		PermModerationActionApprove,
 		PermModerationAppealReview,
+		PermIdentityProfileRead,
+		PermListingsRead,
+		PermTrustRead,
 	},
 	RoleSupport: {
 		PermDisputesRead,
@@ -71,6 +81,9 @@ var RolePermissions = map[Role][]Permission{
 		PermModerationAppealReview,
 		PermDisputesRead,
 		PermDisputesReview,
+		PermIdentityProfileRead,
+		PermListingsRead,
+		PermTrustRead,
 	},
 }
 

@@ -362,6 +362,14 @@ func parseCaseQuery(w http.ResponseWriter, r *http.Request) (moderation.CaseQuer
 		}
 		out.SubjectType = &tt
 	}
+	if raw := strings.TrimSpace(q.Get("subjectId")); raw != "" {
+		id, err := moderation.ParseID(raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request")
+			return moderation.CaseQuery{}, false
+		}
+		out.SubjectID = &id
+	}
 	if raw := strings.TrimSpace(q.Get("limit")); raw != "" {
 		n, err := strconv.Atoi(raw)
 		if err != nil {

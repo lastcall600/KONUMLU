@@ -239,6 +239,7 @@ type CaseQuery struct {
 	Status      *CaseStatus
 	Priority    *CasePriority
 	SubjectType *TargetType
+	SubjectID   *ID
 	Cursor      string
 	Limit       int
 }

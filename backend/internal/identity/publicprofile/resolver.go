@@ -70,6 +70,59 @@ func (r *Resolver) ResolveUserIDByPublicID(ctx context.Context, publicProfileID 
 	return toContractID(userID), nil
 }
 
+func (r *Resolver) StaffByPublicID(ctx context.Context, publicProfileID contracts.ID) (contracts.StaffProfile, error) {
+	if r == nil || r.svc == nil {
+		return contracts.StaffProfile{}, contracts.ErrUnavailable
+	}
+	if publicProfileID.IsZero() {
+		return contracts.StaffProfile{}, contracts.ErrZeroID
+	}
+	view, err := r.svc.StaffByPublicID(ctx, toIdentityID(publicProfileID))
+	return mapStaff(view, err)
+}
+
+func (r *Resolver) StaffByUserID(ctx context.Context, userID contracts.ID) (contracts.StaffProfile, error) {
+	if r == nil || r.svc == nil {
+		return contracts.StaffProfile{}, contracts.ErrUnavailable
+	}
+	if userID.IsZero() {
+		return contracts.StaffProfile{}, contracts.ErrZeroID
+	}
+	view, err := r.svc.StaffByUserID(ctx, toIdentityID(userID))
+	return mapStaff(view, err)
+}
+
+func (r *Resolver) StaffUserIDByPublicID(ctx context.Context, publicProfileID contracts.ID) (contracts.ID, error) {
+	if r == nil || r.svc == nil {
+		return contracts.ID{}, contracts.ErrUnavailable
+	}
+	if publicProfileID.IsZero() {
+		return contracts.ID{}, contracts.ErrZeroID
+	}
+	userID, err := r.svc.StaffUserIDByPublicID(ctx, toIdentityID(publicProfileID))
+	if err != nil {
+		return contracts.ID{}, mapContractErr(err)
+	}
+	return toContractID(userID), nil
+}
+
+func mapStaff(view StaffView, err error) (contracts.StaffProfile, error) {
+	if err != nil {
+		return contracts.StaffProfile{}, mapContractErr(err)
+	}
+	return contracts.StaffProfile{
+		PublicProfileID: toContractID(view.PublicProfileID),
+		DisplayName:     cloneDisplay(view.DisplayName),
+		ModerationState: string(view.ModerationState),
+		MemberSince:     view.MemberSince,
+		CreatedAt:       view.CreatedAt,
+		UpdatedAt:       view.UpdatedAt,
+		AccountEligible: view.AccountEligible,
+		Disabled:        view.Disabled,
+		Deleted:         view.Deleted,
+	}, nil
+}
+
 func mapContract(view PublicView, err error) (contracts.PublicProfile, error) {
 	if err != nil {
 		return contracts.PublicProfile{}, mapContractErr(err)
@@ -115,3 +168,4 @@ func toIdentityID(id contracts.ID) [16]byte {
 
 var _ contracts.PublicProfileResolver = (*Resolver)(nil)
 var _ contracts.PublicProfileModeration = (*Resolver)(nil)
+var _ contracts.StaffProfileReader = (*Resolver)(nil)

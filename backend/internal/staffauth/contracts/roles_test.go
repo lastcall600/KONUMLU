@@ -17,6 +17,12 @@ func TestRolePermissionMappingIsExplicit(t *testing.T) {
 	if HasPermission([]Role{RoleSupport}, PermModerationCaseWrite) {
 		t.Fatal("support must not write cases")
 	}
+	if HasPermission([]Role{RoleSupport}, PermIdentityProfileRead) || HasPermission([]Role{RoleSupport}, PermListingsRead) || HasPermission([]Role{RoleSupport}, PermTrustRead) {
+		t.Fatal("support must not read user/listing 360")
+	}
+	if !HasPermission([]Role{RoleModerator}, PermIdentityProfileRead) || !HasPermission([]Role{RoleModerator}, PermListingsRead) || !HasPermission([]Role{RoleModerator}, PermTrustRead) {
+		t.Fatal("moderator should read user/listing 360")
+	}
 	if !HasPermission([]Role{RoleAdmin}, PermDisputesReview) || !HasPermission([]Role{RoleAdmin}, PermModerationActionApprove) {
 		t.Fatal("admin union")
 	}

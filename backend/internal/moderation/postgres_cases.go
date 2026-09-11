@@ -85,6 +85,9 @@ func (p *PostgresStore) ListCases(ctx context.Context, q CaseQuery, cursor *case
 	if q.SubjectType != nil {
 		b.WriteString(` AND subject_type = ` + add(string(*q.SubjectType)))
 	}
+	if q.SubjectID != nil {
+		b.WriteString(` AND subject_id = ` + add(*q.SubjectID))
+	}
 	if cursor != nil {
 		ts := add(cursor.CreatedAt.UTC())
 		cid := add(cursor.ID)

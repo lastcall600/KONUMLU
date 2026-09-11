@@ -15,6 +15,7 @@ import {
   type StaffAction,
 } from "@/lib/moderation-actions";
 import { fetchModerationCase, type CaseDetailLoadResult } from "@/lib/moderation-cases";
+import { TargetLink } from "@/components/TargetLink";
 
 const EMPTY_FORM = {
   actionType: "warning",
@@ -194,7 +195,8 @@ export function CaseActions({ caseId }: { caseId: string }) {
             döngüsü backend tarafından doğrulanır.
           </p>
           <p>
-            Hedef: {caseResult.data.subjectType} / <code>{caseResult.data.subjectId}</code>
+            Hedef: {caseResult.data.subjectType} /{" "}
+            <TargetLink type={caseResult.data.subjectType} id={caseResult.data.subjectId} />
           </p>
           <label>
             Tür
