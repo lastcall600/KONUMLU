@@ -70,3 +70,139 @@ body {
 .page-status button {
   margin-block-start: 0.75rem;
 }
+
+.shell-nav a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.shell-nav a[aria-current="page"] {
+  font-weight: 600;
+  color: #111;
+}
+
+.ops-page {
+  max-inline-size: 72rem;
+}
+
+.ops-header h1 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.ops-header p {
+  margin: 0.25rem 0 0.75rem;
+  color: #555;
+  font-size: 0.875rem;
+}
+
+.ops-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+  margin-block-end: 0.75rem;
+}
+
+.ops-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #444;
+}
+
+.ops-filters select {
+  min-inline-size: 10rem;
+  font: inherit;
+  font-weight: 400;
+  font-size: 0.8125rem;
+}
+
+.ops-banner {
+  margin: 0 0 0.75rem;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid #ddd;
+  background: #fff;
+  font-size: 0.875rem;
+}
+
+.ops-banner-auth,
+.ops-banner-error {
+  border-color: #c45c5c;
+  background: #fff6f6;
+}
+
+.ops-table-wrap {
+  overflow-x: auto;
+  border: 1px solid #ddd;
+  background: #fff;
+}
+
+.ops-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+}
+
+.ops-table th,
+.ops-table td {
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid #eee;
+  text-align: start;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+.ops-table th {
+  background: #fafafa;
+  font-weight: 600;
+}
+
+.ops-table code {
+  font-size: 0.75rem;
+}
+
+.status-chip {
+  display: inline-block;
+  padding: 0.05rem 0.35rem;
+  border: 1px solid #ccc;
+  border-radius: 0.2rem;
+  font-size: 0.75rem;
+}
+
+.status-submitted {
+  border-color: #c4a35c;
+}
+
+.status-triaged {
+  border-color: #5c7ac4;
+}
+
+.status-closed {
+  border-color: #6a6a6a;
+  color: #555;
+}
+
+.ops-pager {
+  display: flex;
+  gap: 0.5rem;
+  margin-block-start: 0.75rem;
+}
+
+.ops-pager button {
+  font: inherit;
+  font-size: 0.8125rem;
+}
+
+@media (max-width: 48rem) {
+  .shell {
+    flex-direction: column;
+  }
+
+  .shell-nav {
+    flex: none;
+    border-inline-end: 0;
+    border-block-end: 1px solid #ddd;
+  }
+}
