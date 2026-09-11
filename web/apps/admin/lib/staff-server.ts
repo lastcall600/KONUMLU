@@ -55,8 +55,23 @@ export function staffDevIdpEnabled(): boolean {
 }
 
 export function copyAllowedQueueParams(src: URLSearchParams): URLSearchParams {
+  return copyAllowedParams(src, ALLOWED_QUEUE_PARAMS);
+}
+
+const ALLOWED_CASE_PARAMS = ["status", "priority", "subjectType", "limit", "cursor"] as const;
+const ALLOWED_NESTED_LIST_PARAMS = ["limit"] as const;
+
+export function copyAllowedCaseParams(src: URLSearchParams): URLSearchParams {
+  return copyAllowedParams(src, ALLOWED_CASE_PARAMS);
+}
+
+export function copyAllowedNestedListParams(src: URLSearchParams): URLSearchParams {
+  return copyAllowedParams(src, ALLOWED_NESTED_LIST_PARAMS);
+}
+
+function copyAllowedParams(src: URLSearchParams, keys: readonly string[]): URLSearchParams {
   const out = new URLSearchParams();
-  for (const key of ALLOWED_QUEUE_PARAMS) {
+  for (const key of keys) {
     const value = src.get(key)?.trim();
     if (value) {
       out.set(key, value);
