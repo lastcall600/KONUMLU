@@ -88,6 +88,54 @@ func (s *Service) ResolveUserIDByPublicID(ctx context.Context, publicProfileID i
 	return got.Profile.UserID, nil
 }
 
+// StaffByPublicID returns an operational view, including restricted/disabled profiles.
+// It never lazy-creates a row and never includes the internal user id.
+func (s *Service) StaffByPublicID(ctx context.Context, publicProfileID identity.ID) (StaffView, error) {
+	got, err := s.lookupByPublicID(ctx, publicProfileID)
+	if err != nil {
+		return StaffView{}, err
+	}
+	return toStaffView(got), nil
+}
+
+// StaffByUserID returns an operational view for a listing owner mapping.
+// Missing profiles are not created.
+func (s *Service) StaffByUserID(ctx context.Context, userID identity.ID) (StaffView, error) {
+	if s == nil || s.store == nil {
+		return StaffView{}, ErrStoreRequired
+	}
+	if userID.IsZero() {
+		return StaffView{}, errZeroID
+	}
+	profile, err := s.store.GetByUserID(ctx, userID)
+	if err != nil {
+		return StaffView{}, mapServiceErr(err)
+	}
+	user, err := s.store.GetUser(ctx, userID)
+	if err != nil {
+		return StaffView{}, mapServiceErr(err)
+	}
+	return toStaffView(storedPublic{
+		Profile:     profile,
+		MemberSince: user.CreatedAt,
+		DisabledAt:  user.DisabledAt,
+		DeletedAt:   user.DeletedAt,
+	}), nil
+}
+
+// StaffUserIDByPublicID maps a public profile id for server-side composition,
+// including disabled or deleted accounts. Callers must not expose the user id.
+func (s *Service) StaffUserIDByPublicID(ctx context.Context, publicProfileID identity.ID) (identity.ID, error) {
+	got, err := s.lookupByPublicID(ctx, publicProfileID)
+	if err != nil {
+		return identity.ID{}, err
+	}
+	if got.Profile.UserID.IsZero() {
+		return identity.ID{}, ErrNotFound
+	}
+	return got.Profile.UserID, nil
+}
+
 func (s *Service) ApplyModerationState(ctx context.Context, in contracts.ApplyPublicProfileModerationInput) error {
 	if err := in.Validate(); err != nil {
 		return mapContractApplyErr(err)
@@ -227,6 +275,22 @@ func toPublicView(p Profile, memberSince time.Time) PublicView {
 		PublicProfileID: p.PublicProfileID,
 		DisplayName:     cloneDisplay(p.DisplayName),
 		MemberSince:     memberSince.UTC(),
+	}
+}
+
+func toStaffView(got storedPublic) StaffView {
+	disabled := got.DisabledAt != nil
+	deleted := got.DeletedAt != nil
+	return StaffView{
+		PublicProfileID: got.Profile.PublicProfileID,
+		DisplayName:     cloneDisplay(got.Profile.DisplayName),
+		ModerationState: got.Profile.ModerationState.Normalized(),
+		MemberSince:     got.MemberSince.UTC(),
+		CreatedAt:       got.Profile.CreatedAt.UTC(),
+		UpdatedAt:       got.Profile.UpdatedAt.UTC(),
+		AccountEligible: got.accountPresent(),
+		Disabled:        disabled,
+		Deleted:         deleted,
 	}
 }
 

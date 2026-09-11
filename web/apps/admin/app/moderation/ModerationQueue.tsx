@@ -18,6 +18,7 @@ import {
   type QueueLoadResult,
   type StaffReport,
 } from "@/lib/moderation-queue";
+import { TargetLink } from "@/components/TargetLink";
 
 function formatTimestamp(value: string): string {
   if (!value) {
@@ -239,7 +240,7 @@ export function ModerationQueue() {
                   </td>
                   <td>{row.targetType}</td>
                   <td>
-                    <code>{row.targetId}</code>
+                    <TargetLink type={row.targetType} id={row.targetId} />
                   </td>
                   <td>{row.reasonCode}</td>
                   <td>

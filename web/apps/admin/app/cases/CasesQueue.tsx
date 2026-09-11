@@ -16,6 +16,7 @@ import {
   type CaseQueueLoadResult,
   type StaffCaseSummary,
 } from "@/lib/moderation-cases";
+import { TargetLink } from "@/components/TargetLink";
 
 function formatTimestamp(value: string): string {
   if (!value) {
@@ -229,7 +230,7 @@ export function CasesQueue() {
                   </td>
                   <td>{row.subjectType}</td>
                   <td>
-                    <code>{row.subjectId}</code>
+                    <TargetLink type={row.subjectType} id={row.subjectId} />
                   </td>
                   <td title={row.title}>{truncate(row.title, 48)}</td>
                   <td>{row.assignedStaffId ? <code>{row.assignedStaffId}</code> : "—"}</td>

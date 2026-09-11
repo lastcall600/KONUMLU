@@ -30,3 +30,10 @@ func (s *Service) GetPublic(ctx context.Context, userID ID) (PublicPassport, err
 	}
 	return ToPublicPassport(profile), nil
 }
+
+func (s *Service) History(ctx context.Context, userID ID) ([]HistoryEntry, error) {
+	if s == nil || s.projector == nil {
+		return nil, errStoreRequired
+	}
+	return s.projector.History(ctx, userID)
+}

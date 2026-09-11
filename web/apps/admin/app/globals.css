@@ -379,6 +379,39 @@ body {
   font-weight: 400;
 }
 
+.status-new,
+.status-draft {
+  border-color: #8a8a8a;
+}
+
+.status-verified,
+.status-ready,
+.status-published,
+.status-eligible {
+  border-color: #5c9c6a;
+}
+
+.status-established,
+.status-verification_pending {
+  border-color: #5c7ac4;
+}
+
+.status-restricted,
+.status-disabled,
+.status-ineligible {
+  border-color: #c48a5c;
+}
+
+.status-removed,
+.status-archived,
+.status-deleted {
+  border-color: #c45c5c;
+}
+
+.status-none {
+  border-color: #8a8a8a;
+}
+
 @media (max-width: 48rem) {
   .shell {
     flex-direction: column;

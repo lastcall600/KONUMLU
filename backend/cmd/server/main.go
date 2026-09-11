@@ -207,11 +207,32 @@ func run() error {
 		return fmt.Errorf("marketplace http: %w", err)
 	}
 
+	identityStaff, err := newIdentityStaffHTTP(pool, staffAuth)
+	if err != nil {
+		return fmt.Errorf("identity staff http: %w", err)
+	}
+	listingsStaff, err := newListingsStaffHTTP(pool, staffAuth, objects)
+	if err != nil {
+		return fmt.Errorf("listings staff http: %w", err)
+	}
+	trustStaff, err := newTrustStaffHTTP(pool, staffAuth)
+	if err != nil {
+		return fmt.Errorf("trust staff http: %w", err)
+	}
+	reviewStaff, err := newReviewAggregatesStaffHTTP(pool, staffAuth)
+	if err != nil {
+		return fmt.Errorf("review aggregates staff http: %w", err)
+	}
+
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: observability.Wrap(newMux(composeReady(pool.Ready, cacheReady), identityHandler, publicProfileHandler, mediaHandler, listingsHandler, masterdataHandler, searchHandler, favoritesHandler, savedSearchHandler, messagingHandler, verifiedHandler, trustHandler, reviewsHandler, reviewAggregatesHandler, moderationHandler, businessesHandler, needsHandler, offersHandler, transactionsHandler, paymentsHandler, deliveriesHandler, disputesHandler, staffRoutes{
 			moderation: moderationStaff,
 			disputes:   disputesStaff,
+			identity:   identityStaff,
+			listings:   listingsStaff,
+			trust:      trustStaff,
+			reviews:    reviewStaff,
 		})),
 	}
 
@@ -314,12 +335,28 @@ func newMux(ready health.CheckFunc, identityHandler *httpapi.Handler, publicProf
 	if staff.disputes != nil {
 		staff.disputes.Register(mux)
 	}
+	if staff.identity != nil {
+		staff.identity.Register(mux)
+	}
+	if staff.listings != nil {
+		staff.listings.Register(mux)
+	}
+	if staff.trust != nil {
+		staff.trust.Register(mux)
+	}
+	if staff.reviews != nil {
+		staff.reviews.Register(mux)
+	}
 	return mux
 }
 
 type staffRoutes struct {
 	moderation *moderationhttp.StaffHandler
 	disputes   *disputeshttp.StaffHandler
+	identity   *publicprofile.StaffHandler
+	listings   *listingshttp.StaffHandler
+	trust      *trusthttp.StaffHandler
+	reviews    *reviewaggregateshttp.StaffHandler
 }
 
 func newStaffAuthorizer(cfg config.Config) (staffauthcontracts.Authorizer, error) {
@@ -331,6 +368,90 @@ func newStaffAuthorizer(cfg config.Config) (staffauthcontracts.Authorizer, error
 		return nil, nil
 	}
 	return staffauth.NewAuthorizer(provider, staffauth.DefaultPolicy())
+}
+
+func newIdentityStaffHTTP(pool *db.Pool, staffAuth staffauthcontracts.Authorizer) (*publicprofile.StaffHandler, error) {
+	if staffAuth == nil {
+		return nil, nil
+	}
+	svc, err := publicprofile.NewService(publicprofile.NewPostgresStore(pool), nil)
+	if err != nil {
+		return nil, err
+	}
+	return publicprofile.NewStaff(staffAuth, svc)
+}
+
+func newListingsStaffHTTP(pool *db.Pool, staffAuth staffauthcontracts.Authorizer, objects media.ObjectStorage) (*listingshttp.StaffHandler, error) {
+	if staffAuth == nil {
+		return nil, nil
+	}
+	mdSvc, err := masterdata.NewService(masterdata.NewPostgresStore(pool), nil)
+	if err != nil {
+		return nil, err
+	}
+	listingSvc, err := listings.NewService(listings.NewPostgresStore(pool), masterdata.NewPublishedForms(mdSvc), nil)
+	if err != nil {
+		return nil, err
+	}
+	locSvc, err := location.NewService(location.NewPostgresStore(pool), nil)
+	if err != nil {
+		return nil, err
+	}
+	var publicMedia mediacontracts.PublicListingMedia
+	if objects != nil {
+		mediaSvc, err := media.NewService(media.NewPostgresStore(pool), objects, nil)
+		if err != nil {
+			return nil, err
+		}
+		publicMedia = media.NewPublicListingMedia(mediaSvc)
+	}
+	profileSvc, err := publicprofile.NewService(publicprofile.NewPostgresStore(pool), nil)
+	if err != nil {
+		return nil, err
+	}
+	profiles, err := publicprofile.NewResolver(profileSvc)
+	if err != nil {
+		return nil, err
+	}
+	return listingshttp.NewStaff(staffAuth, listingSvc, location.NewListingLocations(locSvc), publicMedia, profiles)
+}
+
+func newTrustStaffHTTP(pool *db.Pool, staffAuth staffauthcontracts.Authorizer) (*trusthttp.StaffHandler, error) {
+	if staffAuth == nil {
+		return nil, nil
+	}
+	projector, err := trust.NewProjector(trust.NewPostgresStore(pool), trust.DefaultLevelPolicy())
+	if err != nil {
+		return nil, err
+	}
+	svc, err := trust.NewService(projector)
+	if err != nil {
+		return nil, err
+	}
+	profileSvc, err := publicprofile.NewService(publicprofile.NewPostgresStore(pool), nil)
+	if err != nil {
+		return nil, err
+	}
+	profiles, err := publicprofile.NewResolver(profileSvc)
+	if err != nil {
+		return nil, err
+	}
+	return trusthttp.NewStaff(staffAuth, svc, profiles)
+}
+
+func newReviewAggregatesStaffHTTP(pool *db.Pool, staffAuth staffauthcontracts.Authorizer) (*reviewaggregateshttp.StaffHandler, error) {
+	if staffAuth == nil {
+		return nil, nil
+	}
+	projector, err := reviewaggregates.NewProjector(reviewaggregates.NewPostgresStore(pool))
+	if err != nil {
+		return nil, err
+	}
+	svc, err := reviewaggregates.NewService(projector)
+	if err != nil {
+		return nil, err
+	}
+	return reviewaggregateshttp.NewStaff(staffAuth, svc)
 }
 
 func newBusinessesNeedsAndOffersHTTP(pool *db.Pool, cfg config.Config, sessions *identity.Sessions, staffAuth staffauthcontracts.Authorizer) (*businesseshttp.Handler, *needshttp.Handler, *offershttp.Handler, *transactionshttp.Handler, *paymentshttp.Handler, *deliverieshttp.Handler, *disputeshttp.Handler, *disputeshttp.StaffHandler, error) {

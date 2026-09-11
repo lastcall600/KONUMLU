@@ -138,6 +138,9 @@ func (p *PostgresStore) ListQueue(ctx context.Context, q QueueQuery, cursor *que
 	if q.TargetType != nil {
 		b.WriteString(` AND target_type = ` + add(string(*q.TargetType)))
 	}
+	if q.TargetID != nil {
+		b.WriteString(` AND target_id = ` + add(*q.TargetID))
+	}
 	if q.ReasonCode != nil {
 		b.WriteString(` AND reason_code = ` + add(string(*q.ReasonCode)))
 	}

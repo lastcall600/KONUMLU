@@ -498,11 +498,19 @@ func TestDisputesRouteWired(t *testing.T) {
 
 func TestStaffRoutesUnregisteredWithoutProvider(t *testing.T) {
 	mux := newMux(func(ctx context.Context) error { return nil }, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, staffRoutes{})
-	req := httptest.NewRequest(http.MethodGet, "/v1/staff/moderation/reports", nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("unconfigured staff moderation status = %d", rec.Code)
+	for _, path := range []string{
+		"/v1/staff/moderation/reports",
+		"/v1/staff/identity/profiles/00000000-0000-4000-8000-000000000001",
+		"/v1/staff/listings/00000000-0000-4000-8000-000000000001",
+		"/v1/staff/trust/profiles/00000000-0000-4000-8000-000000000001",
+		"/v1/staff/review-aggregates/listings/00000000-0000-4000-8000-000000000001",
+	} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("%s unconfigured status = %d", path, rec.Code)
+		}
 	}
 }
 

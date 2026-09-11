@@ -222,6 +222,14 @@ func parseQueueQuery(w http.ResponseWriter, r *http.Request) (moderation.QueueQu
 		}
 		out.TargetType = &tt
 	}
+	if raw := strings.TrimSpace(q.Get("targetId")); raw != "" {
+		id, err := moderation.ParseID(raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request")
+			return moderation.QueueQuery{}, false
+		}
+		out.TargetID = &id
+	}
 	if raw := strings.TrimSpace(q.Get("reasonCode")); raw != "" {
 		rc, err := moderation.ParseReasonCode(raw)
 		if err != nil {

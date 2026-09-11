@@ -301,6 +301,45 @@ export async function fetchModerationCases(
   return { ok: true, data: { cases, nextCursor } };
 }
 
+export async function fetchCasesForSubject(
+  subjectType: string,
+  subjectId: string,
+  signal?: AbortSignal,
+): Promise<CaseQueueLoadResult> {
+  const params = new URLSearchParams();
+  params.set("subjectType", subjectType);
+  params.set("subjectId", subjectId);
+  params.set("limit", "20");
+  const path = `/moderation/cases?${params.toString()}`;
+  let res: Response;
+  try {
+    res = await staffApiFetch(path, { method: "GET", signal });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw err;
+    }
+    return { ok: false, kind: "error", status: 0, message: "Kuyruk isteği başarısız oldu." };
+  }
+  const payload = await readJson(res);
+  if (!res.ok) {
+    const kind = queueKindFromStatus(res.status);
+    return { ok: false, kind, status: res.status, message: queueMessage(kind, res.status) };
+  }
+  if (!payload || typeof payload !== "object" || !Array.isArray((payload as StaffCaseList).cases)) {
+    return { ok: false, kind: "error", status: res.status, message: "Kuyruk yanıtı geçersiz." };
+  }
+  const cases: StaffCaseSummary[] = [];
+  for (const row of (payload as StaffCaseList).cases) {
+    const parsed = parseStaffCaseSummary(row);
+    if (!parsed) {
+      return { ok: false, kind: "error", status: res.status, message: "Kuyruk yanıtı geçersiz." };
+    }
+    cases.push(parsed);
+  }
+  const nextCursor = optionalString((payload as StaffCaseList).nextCursor);
+  return { ok: true, data: { cases, nextCursor } };
+}
+
 export async function fetchModerationCase(
   caseId: string,
   signal?: AbortSignal,

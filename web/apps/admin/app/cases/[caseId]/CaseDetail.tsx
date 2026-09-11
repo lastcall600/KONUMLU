@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState, type ReactNode } from "react";
 
 import { CaseOpsNav } from "@/components/CaseOpsNav";
+import { TargetLink } from "@/components/TargetLink";
 import {
   fetchModerationCase,
   type CaseDetailLoadResult,
@@ -167,7 +168,7 @@ export function CaseDetail({ caseId }: { caseId: string }) {
             </Field>
             <Field label="Hedef türü">{detail.subjectType}</Field>
             <Field label="Hedef">
-              <code>{detail.subjectId}</code>
+              <TargetLink type={detail.subjectType} id={detail.subjectId} />
             </Field>
             <Field label="Başlık">{detail.title || "—"}</Field>
             <Field label="Atanan">

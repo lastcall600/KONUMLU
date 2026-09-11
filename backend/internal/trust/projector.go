@@ -86,6 +86,23 @@ func (p *Projector) Profile(ctx context.Context, userID ID) (UserProfile, error)
 	return got, nil
 }
 
+func (p *Projector) History(ctx context.Context, userID ID) ([]HistoryEntry, error) {
+	if p == nil || p.store == nil {
+		return nil, errStoreRequired
+	}
+	if userID.IsZero() {
+		return nil, errZeroID
+	}
+	rows, err := p.store.ListHistory(ctx, userID)
+	if err != nil {
+		return nil, mapStoreErr(err)
+	}
+	if rows == nil {
+		return []HistoryEntry{}, nil
+	}
+	return rows, nil
+}
+
 func completedFromOutbox(event outbox.Event) (CompletedInteraction, error) {
 	if event.EventType != verifiedcontracts.EventTypeInteractionCompleted || event.EventVersion != verifiedcontracts.EventVersion {
 		return CompletedInteraction{}, errInvalidEvent

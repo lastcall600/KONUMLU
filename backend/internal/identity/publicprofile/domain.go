@@ -128,6 +128,19 @@ type PublicView struct {
 	MemberSince     time.Time
 }
 
+// StaffView is the operational public-profile projection. Internal user id is omitted.
+type StaffView struct {
+	PublicProfileID identity.ID
+	DisplayName     *string
+	ModerationState ModerationState
+	MemberSince     time.Time
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+	AccountEligible bool
+	Disabled        bool
+	Deleted         bool
+}
+
 func ParsePublicID(s string) (identity.ID, error) {
 	id, err := identity.ParseID(s)
 	if err != nil || id.IsZero() {

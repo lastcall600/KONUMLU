@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 
+import { TargetLink } from "@/components/TargetLink";
+
 import {
   fetchModerationReport,
   isReportStatus,
@@ -134,7 +136,7 @@ export function ModerationReportDetail({ reportId }: { reportId: string }) {
             </Field>
             <Field label="Hedef türü">{report.targetType}</Field>
             <Field label="Hedef">
-              <code>{report.targetId}</code>
+              <TargetLink type={report.targetType} id={report.targetId} />
             </Field>
             <Field label="Gerekçe">{report.reasonCode}</Field>
             <Field label="Açıklama">{report.description ?? "—"}</Field>

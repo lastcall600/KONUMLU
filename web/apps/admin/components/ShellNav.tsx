@@ -10,8 +10,8 @@ type NavItem = {
 
 const NAV_ITEMS: readonly NavItem[] = [
   { label: "Overview", href: "/" },
-  { label: "Users" },
-  { label: "Listings" },
+  { label: "Users", href: "/users" },
+  { label: "Listings", href: "/listings" },
   { label: "Companies" },
   { label: "Trust" },
   { label: "Moderation", href: "/moderation" },

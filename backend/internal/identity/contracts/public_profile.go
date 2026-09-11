@@ -38,3 +38,25 @@ type PublicProfileResolver interface {
 	// Callers must not put the returned user id on public HTTP or URLs.
 	ResolveUserIDByPublicID(ctx context.Context, publicProfileID ID) (ID, error)
 }
+
+// StaffProfile is the operational Identity public-profile surface for Management Center.
+// It omits internal user id, email, phone, credentials, and session secrets.
+type StaffProfile struct {
+	PublicProfileID ID
+	DisplayName     *string
+	ModerationState string
+	MemberSince     time.Time
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+	AccountEligible bool
+	Disabled        bool
+	Deleted         bool
+}
+
+// StaffProfileReader is the Identity staff-read surface. Implementations live in
+// identity/publicprofile. Callers must not put resolved user ids on staff HTTP.
+type StaffProfileReader interface {
+	StaffByPublicID(ctx context.Context, publicProfileID ID) (StaffProfile, error)
+	StaffByUserID(ctx context.Context, userID ID) (StaffProfile, error)
+	StaffUserIDByPublicID(ctx context.Context, publicProfileID ID) (ID, error)
+}
