@@ -64,3 +64,62 @@ export function copyAllowedQueueParams(src: URLSearchParams): URLSearchParams {
   }
   return out;
 }
+
+function jsonError(status: number, code: string): Response {
+  return Response.json({ error: code }, { status });
+}
+
+export type StaffProxyInit = {
+  method?: string;
+  search?: URLSearchParams;
+  jsonBody?: unknown;
+};
+
+/** Server-only proxy to staff HTTP. Attaches the dev Bearer token when enabled. */
+export async function proxyStaffRequest(backendPath: string, init: StaffProxyInit = {}): Promise<Response> {
+  if (staffDevIdpEnabled() && staffDevBearerToken() === null) {
+    return jsonError(401, "unauthenticated");
+  }
+
+  let backendBase: string;
+  try {
+    backendBase = staffBackendBaseUrl();
+  } catch {
+    return jsonError(503, "unavailable");
+  }
+
+  const target = new URL(backendPath, `${backendBase}/`);
+  if (init.search) {
+    target.search = init.search.toString();
+  }
+
+  const headers = new Headers({ Accept: "application/json" });
+  const token = staffDevBearerToken();
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+
+  const fetchInit: RequestInit = {
+    method: init.method ?? "GET",
+    headers,
+    cache: "no-store",
+  };
+  if (init.jsonBody !== undefined) {
+    headers.set("Content-Type", "application/json");
+    fetchInit.body = JSON.stringify(init.jsonBody);
+  }
+
+  let upstream: Response;
+  try {
+    upstream = await fetch(target, fetchInit);
+  } catch {
+    return jsonError(503, "unavailable");
+  }
+
+  const body = await upstream.text();
+  const contentType = upstream.headers.get("content-type") ?? "application/json";
+  return new Response(body, {
+    status: upstream.status,
+    headers: { "Content-Type": contentType },
+  });
+}

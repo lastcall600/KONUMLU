@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
@@ -225,13 +226,16 @@ export function ModerationQueue() {
                 <th scope="col">Güncelleme</th>
                 <th scope="col">Personel notu</th>
                 <th scope="col">Durumu değiştiren</th>
+                <th scope="col">Aç</th>
               </tr>
             </thead>
             <tbody>
               {reports.map((row) => (
                 <tr key={row.reportId}>
                   <td>
-                    <code>{row.reportId}</code>
+                    <Link href={`/moderation/${encodeURIComponent(row.reportId)}`}>
+                      <code>{row.reportId}</code>
+                    </Link>
                   </td>
                   <td>{row.targetType}</td>
                   <td>
@@ -247,6 +251,9 @@ export function ModerationQueue() {
                   <td title={row.staffNote ?? ""}>{truncate(row.staffNote, 48)}</td>
                   <td>
                     {row.statusChangedBy ? <code>{row.statusChangedBy}</code> : "—"}
+                  </td>
+                  <td>
+                    <Link href={`/moderation/${encodeURIComponent(row.reportId)}`}>Aç</Link>
                   </td>
                 </tr>
               ))}
