@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState, type ReactNode } from "react";
 
+import { CaseOpsNav } from "@/components/CaseOpsNav";
 import {
   fetchModerationCase,
   type CaseDetailLoadResult,
@@ -37,7 +38,7 @@ function historyChange(from: string | undefined, to: string | undefined): string
   return `${from ?? "—"} → ${to ?? "—"}`;
 }
 
-function HistoryRow({ row }: { row: StaffCaseHistory }) {
+function HistoryRow({ caseId, row }: { caseId: string; row: StaffCaseHistory }) {
   return (
     <tr>
       <td>{row.kind}</td>
@@ -56,9 +57,33 @@ function HistoryRow({ row }: { row: StaffCaseHistory }) {
       <td>{historyChange(row.fromPriority, row.toPriority)}</td>
       <td>{historyChange(row.fromAssignedStaffId, row.toAssignedStaffId)}</td>
       <td>{row.note ?? "—"}</td>
-      <td>{row.evidenceId ? <code>{row.evidenceId}</code> : "—"}</td>
-      <td>{row.actionId ? <code>{row.actionId}</code> : "—"}</td>
-      <td>{row.appealId ? <code>{row.appealId}</code> : "—"}</td>
+      <td>
+        {row.evidenceId ? (
+          <Link href={`/cases/${encodeURIComponent(caseId)}/evidence`}>
+            <code>{row.evidenceId}</code>
+          </Link>
+        ) : (
+          "—"
+        )}
+      </td>
+      <td>
+        {row.actionId ? (
+          <Link href={`/cases/${encodeURIComponent(caseId)}/actions/${encodeURIComponent(row.actionId)}`}>
+            <code>{row.actionId}</code>
+          </Link>
+        ) : (
+          "—"
+        )}
+      </td>
+      <td>
+        {row.appealId ? (
+          <Link href={`/cases/${encodeURIComponent(caseId)}/appeals/${encodeURIComponent(row.appealId)}`}>
+            <code>{row.appealId}</code>
+          </Link>
+        ) : (
+          "—"
+        )}
+      </td>
     </tr>
   );
 }
@@ -114,6 +139,7 @@ export function CaseDetail({ caseId }: { caseId: string }) {
         <p>
           <code>{caseId}</code>
         </p>
+        <CaseOpsNav caseId={caseId} />
       </header>
 
       {loading ? <p className="ops-banner">Vaka yükleniyor…</p> : null}
@@ -192,7 +218,11 @@ export function CaseDetail({ caseId }: { caseId: string }) {
                   </thead>
                   <tbody>
                     {detail.history.map((row, index) => (
-                      <HistoryRow key={`${row.kind}-${row.createdAt}-${index}`} row={row} />
+                      <HistoryRow
+                        key={`${row.kind}-${row.createdAt}-${index}`}
+                        caseId={detail.caseId}
+                        row={row}
+                      />
                     ))}
                   </tbody>
                 </table>

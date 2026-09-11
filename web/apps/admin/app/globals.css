@@ -137,6 +137,7 @@ body {
   overflow-x: auto;
   border: 1px solid #ddd;
   background: #fff;
+  margin-block-end: 1rem;
 }
 
 .ops-table {
@@ -184,6 +185,37 @@ body {
   color: #555;
 }
 
+.status-proposed {
+  border-color: #c4a35c;
+}
+
+.status-approved {
+  border-color: #5c7ac4;
+}
+
+.status-executed {
+  border-color: #5c9c6a;
+}
+
+.status-cancelled {
+  border-color: #6a6a6a;
+  color: #555;
+}
+
+.status-under_review {
+  border-color: #c48a5c;
+}
+
+.status-accepted {
+  border-color: #5c9c6a;
+}
+
+.status-rejected,
+.status-withdrawn {
+  border-color: #6a6a6a;
+  color: #555;
+}
+
 .status-open {
   border-color: #5c7ac4;
 }
@@ -219,6 +251,22 @@ body {
 .ops-section h2 {
   margin: 0 0 0.5rem;
   font-size: 0.95rem;
+}
+
+.ops-subnav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.85rem;
+  margin: 0.5rem 0 0.85rem;
+  font-size: 0.8125rem;
+}
+
+.ops-subnav a {
+  color: inherit;
+}
+
+.ops-subnav a[aria-current="page"] {
+  font-weight: 600;
 }
 
 .ops-id-list {
@@ -313,6 +361,7 @@ body {
 
 .ops-action select,
 .ops-action textarea,
+.ops-action input,
 .ops-action button {
   font: inherit;
   font-weight: 400;
@@ -321,6 +370,13 @@ body {
 
 .ops-action textarea {
   resize: vertical;
+}
+
+.ops-confirm {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.4rem;
+  font-weight: 400;
 }
 
 @media (max-width: 48rem) {

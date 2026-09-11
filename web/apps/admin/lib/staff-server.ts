@@ -59,9 +59,14 @@ export function copyAllowedQueueParams(src: URLSearchParams): URLSearchParams {
 }
 
 const ALLOWED_CASE_PARAMS = ["status", "priority", "subjectType", "limit", "cursor"] as const;
+const ALLOWED_NESTED_LIST_PARAMS = ["limit"] as const;
 
 export function copyAllowedCaseParams(src: URLSearchParams): URLSearchParams {
   return copyAllowedParams(src, ALLOWED_CASE_PARAMS);
+}
+
+export function copyAllowedNestedListParams(src: URLSearchParams): URLSearchParams {
+  return copyAllowedParams(src, ALLOWED_NESTED_LIST_PARAMS);
 }
 
 function copyAllowedParams(src: URLSearchParams, keys: readonly string[]): URLSearchParams {
