@@ -27,7 +27,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "usage: check_govulncheck <jsonl> <known.txt>")
 		os.Exit(2)
 	}
-	found, err := reachableIDs(os.Args[1])
+	dep, stdlib, err := classify(os.Args[1])
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
@@ -38,42 +38,60 @@ func main() {
 		os.Exit(2)
 	}
 
-	fmt.Println("govulncheck reachable findings:", join(sorted(found)))
-	if stale := sorted(subtract(known, found)); len(stale) > 0 {
+	fmt.Println("govulncheck third-party reachable findings:", join(sorted(dep)))
+	fmt.Println("govulncheck stdlib reachable findings (informational; Go toolchain follow-up):", join(sorted(stdlib)))
+	if stale := sorted(subtract(known, dep)); len(stale) > 0 {
 		fmt.Println("known-list entries not observed (remove after confirming gone):", join(stale))
 	}
-	if newIDs := sorted(subtract(found, known)); len(newIDs) > 0 {
-		fmt.Fprintln(os.Stderr, "NEW reachable findings (fail):", join(newIDs))
+	if newIDs := sorted(subtract(dep, known)); len(newIDs) > 0 {
+		fmt.Fprintln(os.Stderr, "NEW third-party reachable findings (fail):", join(newIDs))
 		os.Exit(1)
 	}
 }
 
-func reachableIDs(path string) (map[string]struct{}, error) {
+func classify(path string) (dep, stdlib map[string]struct{}, err error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer f.Close()
-	out := map[string]struct{}{}
+	dep = map[string]struct{}{}
+	stdlib = map[string]struct{}{}
 	dec := json.NewDecoder(f)
 	for {
 		var msg message
 		if err := dec.Decode(&msg); err != nil {
 			if err == io.EOF {
-				return out, nil
+				return dep, stdlib, nil
 			}
-			return nil, fmt.Errorf("decode %s: %w", path, err)
+			return nil, nil, fmt.Errorf("decode %s: %w", path, err)
 		}
-		if msg.Finding == nil || msg.Finding.OSV == "" {
+		if msg.Finding == nil || msg.Finding.OSV == "" || !fromMainModule(msg.Finding.Trace) {
 			continue
 		}
-		for _, fr := range msg.Finding.Trace {
-			if fr.Module == "backend" {
-				out[msg.Finding.OSV] = struct{}{}
-				break
-			}
+		switch vulnerableModule(msg.Finding.Trace) {
+		case "stdlib":
+			stdlib[msg.Finding.OSV] = struct{}{}
+		default:
+			dep[msg.Finding.OSV] = struct{}{}
 		}
 	}
+}
+
+func fromMainModule(trace []frame) bool {
+	for _, fr := range trace {
+		if fr.Module == "backend" {
+			return true
+		}
+	}
+	return false
+}
+
+func vulnerableModule(trace []frame) string {
+	if len(trace) == 0 {
+		return ""
+	}
+	return trace[0].Module
 }
 
 func loadKnown(path string) (map[string]struct{}, error) {

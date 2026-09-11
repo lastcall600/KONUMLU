@@ -224,8 +224,15 @@ jobs:
         run: |
           set -euo pipefail
           probe="$(mktemp -d)"
-          # Harmless private-key armor with non-secret filler; never committed.
-          printf '%s\n' '-----BEGIN RSA PRIVATE KEY-----' 'MIIEowIBAAKCAQEA4f5y7q2n8p0v1s3t5u7w9x2y4z6a8b0c1d3e5f7g9h1j3k5' '-----END RSA PRIVATE KEY-----' > "${probe}/probe.txt"
+          # Assemble PEM-shaped armor only in the ephemeral probe file.
+          # Do not store a contiguous private-key block in repository source.
+          {
+            printf '%s%s\n' '-----BEGIN' ' RSA PRIVATE KEY-----'
+            printf 'MIIE'
+            printf 'A%.0s' {1..200}
+            printf '==\n'
+            printf '%s%s\n' '-----END' ' RSA PRIVATE KEY-----'
+          } > "${probe}/probe.txt"
           if gitleaks detect --config .gitleaks.toml --source "${probe}" --no-git --redact --exit-code 1; then
             echo "gitleaks did not fail on the probe fixture" >&2
             exit 1
