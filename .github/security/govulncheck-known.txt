@@ -1,6 +1,4 @@
-# Known reachable *third-party* govulncheck findings deferred from 0C-07.
-# Stdlib findings were addressed in 0C-07A by moving the toolchain to Go 1.26.8.
-# Remediation of IDs listed here is a dependency upgrade and requires a separate authorized task.
-# Any new third-party ID not listed here fails CI.
-GO-2026-5970
-GO-2026-5004
+# Known reachable *third-party* govulncheck findings.
+# Production-hardening sprint 1 remediates the 0C-07 deferrals (x/text, pgx).
+# Any third-party ID observed by govulncheck and not listed here fails CI.
+# Keep this file empty of IDs unless a new finding is explicitly deferred.

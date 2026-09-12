@@ -1,6 +1,7 @@
 package notifications
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -9,6 +10,8 @@ import (
 	"time"
 
 	"backend/internal/notifications/contracts"
+	"backend/internal/platform/config"
+	"backend/internal/platform/observability"
 )
 
 func TestDeliverEmailUsesEmailSender(t *testing.T) {
@@ -37,6 +40,28 @@ func TestDeliverEmailUsesEmailSender(t *testing.T) {
 	}
 	if email.last.TemplateCode != d.TemplateCode || email.last.Locale != d.Locale || email.last.IdempotencyKey != d.ID.String() {
 		t.Fatal("notifications owns template, locale, and idempotency key")
+	}
+}
+
+func TestDeliverDoesNotLogDestinationOrSecret(t *testing.T) {
+	var buf bytes.Buffer
+	observability.ConfigureJSON(config.Config{Environment: config.EnvTest, LogLevel: "info"}, &buf)
+	email := &stubEmail{ref: "email-1"}
+	svc, store, resolver := mustDeliveryService(t, email, &stubSMS{})
+	d := seedDelivery(t, store, contracts.ChannelEmail)
+	secret := "synth-email-token-zzzz"
+	dest := "synth.user@example.test"
+	resolver.material = VerificationMaterial{Kind: MaterialKindEmail, Destination: dest, Secret: secret}
+
+	if _, err := svc.Deliver(context.Background(), d); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if strings.Contains(out, secret) || strings.Contains(out, dest) {
+		t.Fatalf("provider log leaked: %s", out)
+	}
+	if !strings.Contains(out, `"provider":"email"`) || !strings.Contains(out, `"ok":true`) {
+		t.Fatalf("missing provider metadata: %s", out)
 	}
 }
 

@@ -1,5 +1,3 @@
-# Deferred 0C-07: same jackc/pgx/v5@v5.7.6 issue as GO-2026-5004.
-# Upgrade is a separate authorized task (do not auto-patch in this baseline).
-# New CRITICAL with a fix still fail CI.
-CVE-2026-33815
-CVE-2026-33816
+# Trivy ignore list.
+# pgx CVE-2026-33815 / CVE-2026-33816 were deferred in 0C-07 at jackc/pgx/v5@v5.7.6
+# and are remediated by the v5.9.2 upgrade. Do not ignore new CRITICAL findings.

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"backend/internal/notifications/contracts"
+	"backend/internal/platform/observability"
 )
 
 // DeliveryService orchestrates verification delivery.
@@ -104,11 +105,20 @@ func (s *DeliveryService) Deliver(ctx context.Context, delivery Delivery) (Deliv
 }
 
 func (s *DeliveryService) send(ctx context.Context, delivery Delivery, mat VerificationMaterial) (string, error) {
+	start := time.Now()
+	name, ref, err := s.invokeProvider(ctx, delivery, mat)
+	if name != "" {
+		observability.LogProvider(ctx, name, time.Since(start), err)
+	}
+	return ref, err
+}
+
+func (s *DeliveryService) invokeProvider(ctx context.Context, delivery Delivery, mat VerificationMaterial) (string, string, error) {
 	key := delivery.ID.String()
 	switch delivery.Channel {
 	case contracts.ChannelEmail:
 		if s.email == nil {
-			return "", errProviderRequired
+			return "email", "", errProviderRequired
 		}
 		req := EmailSendRequest{
 			Destination:        mat.Destination,
@@ -119,16 +129,16 @@ func (s *DeliveryService) send(ctx context.Context, delivery Delivery, mat Verif
 			IdempotencyKey:     key,
 		}
 		if !req.valid() {
-			return "", errInvalidDelivery
+			return "email", "", errInvalidDelivery
 		}
 		res, err := s.email.Send(ctx, req)
 		if err != nil {
-			return "", err
+			return "email", "", err
 		}
-		return res.ProviderRef, nil
+		return "email", res.ProviderRef, nil
 	case contracts.ChannelSMS:
 		if s.sms == nil {
-			return "", errProviderRequired
+			return "sms", "", errProviderRequired
 		}
 		req := SMSSendRequest{
 			Destination:        mat.Destination,
@@ -139,15 +149,15 @@ func (s *DeliveryService) send(ctx context.Context, delivery Delivery, mat Verif
 			IdempotencyKey:     key,
 		}
 		if !req.valid() {
-			return "", errInvalidDelivery
+			return "sms", "", errInvalidDelivery
 		}
 		res, err := s.sms.Send(ctx, req)
 		if err != nil {
-			return "", err
+			return "sms", "", err
 		}
-		return res.ProviderRef, nil
+		return "sms", res.ProviderRef, nil
 	default:
-		return "", errInvalidDelivery
+		return "", "", errInvalidDelivery
 	}
 }
 

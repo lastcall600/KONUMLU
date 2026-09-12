@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -63,11 +64,11 @@ func run() error {
 
 	// Email/SMS vendors are not selected. Missing senders fail retryably;
 	// the worker must never complete an intent as a successful no-op send.
-	log.Print("outbox worker started")
+	slog.Info("outbox worker started")
 	if err := relay.RunWorkers(ctx, cfg.OutboxWorkerConcurrency); err != nil {
 		return fmt.Errorf("outbox: %w", err)
 	}
-	log.Print("outbox worker stopped")
+	slog.Info("outbox worker stopped")
 	return nil
 }
 
@@ -118,7 +119,9 @@ func newRelay(cfg config.Config, pool *db.Pool) (*outbox.Relay, error) {
 	if err != nil {
 		return nil, err
 	}
-	relay.SetLogf(log.Printf)
+	relay.SetLogf(func(format string, args ...any) {
+		slog.Info("outbox", "detail", fmt.Sprintf(format, args...))
+	})
 	return relay, nil
 }
 
