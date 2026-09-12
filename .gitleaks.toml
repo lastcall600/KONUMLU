@@ -1,0 +1,19 @@
+# Gitleaks configuration for KONUMLU.
+# CI uses --redact. Do not commit real secrets or scanner output.
+
+title = "KONUMLU"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Empty env templates, lockfiles, architecture docs that name config fields, and a unique non-secret CI probe fragment from 0C-07 history"
+paths = [
+  '''(^|/)\.env\.example$''',
+  '''(^|/)go\.sum$''',
+  '''(^|/)package-lock\.json$''',
+  '''docs/architecture/production-runtime\.md$''',
+]
+regexes = [
+  '''MIIEowIBAAKCAQEA4f5y7q2n8p0v1s3t5u7w9x2y4z6a8b0c1d3e5f7g9h1j3k5''',
+]

@@ -48,6 +48,15 @@ Detailed architecture diagrams, domain interaction sequence diagrams, data flow 
 
 *(Files above except `production-runtime.md` are planned; create them as Phase 0A/V1 tasks progress.)*
 
+### `/docs/security/` — Production security baseline
+
+| File | Purpose |
+|---|---|
+| `HIGH-RISK-INVENTORY.md` | Implemented high-risk HTTP surfaces (no invented endpoints) |
+| `AUTHORIZATION-MATRIX.md` | Endpoint × actor × role × ownership outcomes |
+| `AI-DEVELOPMENT-POLICY.md` | AI/dependency rules; AI is not a security authority |
+| `CI-SECURITY.md` | Scanner jobs, failure policy, supply-chain pins |
+
 ### `/docs/domains/` � Domain Specifications
 
 One file per domain. Each file follows the domain spec template.
