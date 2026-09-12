@@ -3,6 +3,7 @@ package media
 import (
 	"context"
 
+	"backend/internal/platform/observability"
 	"backend/internal/platform/outbox"
 )
 
@@ -29,6 +30,13 @@ func (h *ProcessHandler) Handle(ctx context.Context, event outbox.Event) error {
 	if err != nil {
 		return err
 	}
+	observability.FromContext(ctx).Info("media_process_dispatch",
+		"media_id", id.String(),
+		"outbox_event_id", event.ID.String(),
+		"event_type", event.EventType,
+		"event_version", event.EventVersion,
+		"object_category", "listing-images",
+	)
 	if err := h.svc.ProcessAsset(ctx, id); err != nil {
 		return mapStoreErr(err)
 	}

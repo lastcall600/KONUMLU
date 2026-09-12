@@ -57,7 +57,7 @@ func run() error {
 		return fmt.Errorf("database: %w", err)
 	}
 
-	relay, err := newRelay(cfg, pool)
+	relay, err := newRelay(ctx, cfg, pool)
 	if err != nil {
 		return fmt.Errorf("outbox: %w", err)
 	}
@@ -72,7 +72,7 @@ func run() error {
 	return nil
 }
 
-func newRelay(cfg config.Config, pool *db.Pool) (*outbox.Relay, error) {
+func newRelay(ctx context.Context, cfg config.Config, pool *db.Pool) (*outbox.Relay, error) {
 	store := outbox.NewPostgresStore(pool)
 	ob, err := outbox.New(store, outboxPolicy(cfg), nil)
 	if err != nil {
@@ -91,7 +91,7 @@ func newRelay(cfg config.Config, pool *db.Pool) (*outbox.Relay, error) {
 	if err != nil {
 		return nil, err
 	}
-	processHandler, err := newMediaProcessHandler(cfg, pool)
+	processHandler, mediaSvc, err := newMediaProcessHandler(cfg, pool)
 	if err != nil {
 		return nil, err
 	}
@@ -122,6 +122,9 @@ func newRelay(cfg config.Config, pool *db.Pool) (*outbox.Relay, error) {
 	relay.SetLogf(func(format string, args ...any) {
 		slog.Info("outbox", "detail", fmt.Sprintf(format, args...))
 	})
+	if mediaSvc != nil {
+		go media.RunOrphanSweeper(ctx, mediaSvc, 0)
+	}
 	return relay, nil
 }
 

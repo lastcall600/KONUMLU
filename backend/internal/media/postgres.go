@@ -164,6 +164,43 @@ func (p *PostgresStore) ListByListing(ctx context.Context, listingID ID) ([]Asse
 	return out, nil
 }
 
+func (p *PostgresStore) ListReclaimable(ctx context.Context, now time.Time, pendingAge, rejectedAge time.Duration, limit int) ([]Asset, error) {
+	if p == nil || p.db == nil {
+		return nil, errUnavailable
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	pendingCutoff := now.Add(-pendingAge)
+	rejectedCutoff := now.Add(-rejectedAge)
+	rows, err := p.db.Query(ctx, `
+		SELECT `+assetSelectCols+`
+		FROM media.assets
+		WHERE status <> 'ready'
+		  AND (
+			(status = 'pending_upload' AND created_at < $1)
+			OR (status = 'rejected' AND rejected_at IS NOT NULL AND rejected_at < $2)
+		  )
+		ORDER BY updated_at ASC, id ASC
+		LIMIT $3`, pendingCutoff, rejectedCutoff, limit)
+	if err != nil {
+		return nil, mapDBErr(err)
+	}
+	defer rows.Close()
+	out := make([]Asset, 0)
+	for rows.Next() {
+		asset, err := scanAsset(rows)
+		if err != nil {
+			return nil, mapDBErr(err)
+		}
+		out = append(out, asset)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, mapDBErr(err)
+	}
+	return out, nil
+}
+
 func processedKeyArg(key string) any {
 	if key == "" {
 		return nil

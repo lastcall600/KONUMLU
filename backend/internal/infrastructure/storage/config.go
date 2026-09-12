@@ -165,6 +165,9 @@ func (c Config) Validate() error {
 	if c.UploadTTL <= 0 {
 		return fmt.Errorf("%s must be greater than zero when object storage is enabled", envUploadTTL)
 	}
+	if c.UploadTTL > 15*time.Minute {
+		return fmt.Errorf("%s must be 15m or less when object storage is enabled", envUploadTTL)
+	}
 	if c.GetTTL <= 0 {
 		return fmt.Errorf("%s must be greater than zero when object storage is enabled", envGetTTL)
 	}

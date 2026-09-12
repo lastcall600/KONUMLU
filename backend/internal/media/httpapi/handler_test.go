@@ -310,6 +310,26 @@ func TestStorageFailureIs503WithoutProviderDetail(t *testing.T) {
 	assertErrorCode(t, rec, "unavailable")
 }
 
+func TestConfirmDuplicateIsIdempotent(t *testing.T) {
+	h := newTestHandler(t)
+	asset, _ := createPending(t, h)
+	h.objects.PutUntrusted(asset.ObjectKey, media.ObjectStat{SizeBytes: 12, ContentType: "image/png"})
+	path := "/v1/media/listing-images/" + asset.ID.String() + "/confirm"
+	rec := do(t, h, http.MethodPost, path, allowedOrigin, nil, authedCookies(), withCSRF("csrf-token"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("first status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	rec = do(t, h, http.MethodPost, path, allowedOrigin, nil, authedCookies(), withCSRF("csrf-token"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("duplicate status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var body confirmResponse
+	decode(t, rec, &body)
+	if body.Status != string(media.StatusUploaded) {
+		t.Fatalf("body = %+v", body)
+	}
+}
+
 func TestGetRequiresAuth(t *testing.T) {
 	h := newTestHandler(t)
 	asset, _ := createPending(t, h)

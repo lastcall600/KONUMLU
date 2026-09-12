@@ -20,6 +20,7 @@ var safeLogKeys = map[string]struct{}{
 	"actorkind": {}, "sessionpresent": {}, "authorizationpresent": {},
 	"errorclass": {}, "provider": {}, "providerlatencyms": {}, "ok": {},
 	"addr": {}, "eventtype": {}, "eventversion": {}, "eventid": {},
+	"mediaid": {}, "mediastatus": {}, "processingoutcome": {}, "objectcategory": {},
 }
 
 var sensitiveKeyExact = map[string]struct{}{
@@ -38,6 +39,7 @@ var sensitiveKeyExact = map[string]struct{}{
 	"awssecretaccesskey": {}, "secretkey": {}, "accesskey": {},
 	"privatekey": {}, "passkey": {}, "credential": {},
 	"destination": {}, "verificationsecret": {},
+	"uploadurl": {}, "signedurl": {}, "presignedurl": {}, "objectkey": {},
 }
 
 var sensitiveKeyContains = []string{
@@ -61,6 +63,7 @@ var (
 	bearerRE       = regexp.MustCompile(`(?i)bearer\s+\S+`)
 	tcknRE         = regexp.MustCompile(`\b[1-9]\d{10}\b`)
 	secretAssignRE = regexp.MustCompile(`(?i)\b(otp|totp|qr_token|qr_secret|qr|verification_secret|webhook_secret|api_key|staff_dev_token)\s*[:=]\s*\S+`)
+	amzQueryRE     = regexp.MustCompile(`(?i)X-Amz-(Algorithm|Credential|Signature|SignedHeaders|Security-Token|Date|Expires)=[^&\s]+`)
 )
 
 // RedactAttrValue redacts a structured field according to the central policy.
@@ -110,6 +113,7 @@ func RedactText(s string) string {
 		return s
 	}
 	s = bearerRE.ReplaceAllString(s, "Bearer "+Redacted)
+	s = amzQueryRE.ReplaceAllString(s, "X-Amz-$1="+Redacted)
 	s = secretAssignRE.ReplaceAllStringFunc(s, func(m string) string {
 		sep := "="
 		if strings.Contains(m, ":") && !strings.Contains(strings.SplitN(m, ":", 2)[0], "=") {

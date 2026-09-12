@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/HugoSmits86/nativewebp"
+
 	"backend/internal/platform/db"
 	"backend/internal/platform/outbox"
 )
@@ -71,7 +73,7 @@ func TestProcessUploadedToReady(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Status != StatusReady || got.ContentType == nil || *got.ContentType != "image/jpeg" {
+	if got.Status != StatusReady || got.ContentType == nil || *got.ContentType != "image/webp" {
 		t.Fatalf("got = %+v", got)
 	}
 	if got.Width == nil || *got.Width != 12 || got.Height == nil || *got.Height != 8 {
@@ -232,6 +234,125 @@ func TestProcessStorageFailureRetryable(t *testing.T) {
 	}
 }
 
+func TestProcessDownscalesWithoutUpscaleAndEmitsWebP(t *testing.T) {
+	svc, store, objects, clock, _ := mustProcessService(t)
+	svc.SetProcessingPolicy(ProcessingPolicy{MaxWidth: 8, MaxHeight: 8})
+	owner := mustID(t)
+	asset := mustUploadedWithBytes(t, svc, objects, clock, owner, testJPEG(t, 24, 12), "wide.jpg", "image/gif")
+	if err := svc.ProcessAsset(context.Background(), asset.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Get(context.Background(), asset.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != StatusReady || got.ContentType == nil || *got.ContentType != "image/webp" {
+		t.Fatalf("got = %+v", got)
+	}
+	if got.Width == nil || *got.Width != 8 || got.Height == nil || *got.Height != 4 {
+		t.Fatalf("dims = %v x %v", got.Width, got.Height)
+	}
+	data, _, err := objects.GetObject(context.Background(), got.ProcessedObjectKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(data[:4], []byte("RIFF")) || !bytes.Equal(data[8:12], []byte("WEBP")) {
+		t.Fatal("processed object is not WebP")
+	}
+	img, err := nativewebp.Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if img.Bounds().Dx() != 8 || img.Bounds().Dy() != 4 {
+		t.Fatalf("decoded = %s", img.Bounds())
+	}
+	small := mustUploadedWithBytes(t, svc, objects, clock, owner, testPNG(t, 3, 2), "tiny.png", "image/png")
+	if err := svc.ProcessAsset(context.Background(), small.ID); err != nil {
+		t.Fatal(err)
+	}
+	tiny, _ := store.Get(context.Background(), small.ID)
+	if tiny.Width == nil || *tiny.Width != 3 || *tiny.Height != 2 {
+		t.Fatalf("must not upscale: %+v", tiny)
+	}
+}
+
+func TestProcessRejectsExtensionAndMIMESpoof(t *testing.T) {
+	svc, store, objects, clock, _ := mustProcessService(t)
+	owner := mustID(t)
+	asset := mustUploadedWithBytes(t, svc, objects, clock, owner, []byte("not an image at all"), "photo.jpg", "image/jpeg")
+	if err := svc.ProcessAsset(context.Background(), asset.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := store.Get(context.Background(), asset.ID)
+	if got.Status != StatusRejected {
+		t.Fatalf("status = %s", got.Status)
+	}
+}
+
+func TestConfirmUploadDuplicateIsIdempotent(t *testing.T) {
+	svc, _, objects, clock, enq := mustProcessService(t)
+	owner := mustID(t)
+	asset, _, err := svc.CreatePending(context.Background(), owner, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	objects.PutUntrusted(asset.ObjectKey, ObjectStat{SizeBytes: 40, ContentType: "image/png"})
+	clock.now = clock.now.Add(time.Second)
+	first, err := svc.ConfirmUpload(context.Background(), asset.ID, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := svc.ConfirmUpload(context.Background(), asset.ID, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Status != StatusUploaded || second.UpdatedAt != first.UpdatedAt {
+		t.Fatalf("duplicate confirm mutated: %+v", second)
+	}
+	if len(enq.Events) != 1 {
+		t.Fatalf("must not re-enqueue: %d", len(enq.Events))
+	}
+}
+
+func TestSweepOrphansSkipsReady(t *testing.T) {
+	svc, store, objects, clock, _ := mustProcessService(t)
+	owner := mustID(t)
+	pending, _, err := svc.CreatePending(context.Background(), owner, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	objects.PutBytes(pending.ObjectKey, testJPEG(t, 4, 4), "image/jpeg")
+	clock.now = clock.now.Add(25 * time.Hour)
+	n, err := svc.SweepOrphans(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("reclaimed = %d", n)
+	}
+	got, err := store.Get(context.Background(), pending.ID)
+	if err != nil || got.Status != StatusDeleted {
+		t.Fatalf("pending orphan = %+v err=%v", got, err)
+	}
+
+	readySrc := mustUploadedWithBytes(t, svc, objects, clock, owner, testJPEG(t, 6, 6), "ok.jpg", "image/jpeg")
+	if err := svc.ProcessAsset(context.Background(), readySrc.ID); err != nil {
+		t.Fatal(err)
+	}
+	clock.now = clock.now.Add(48 * time.Hour)
+	n, err = svc.SweepOrphans(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("ready must not reclaim: %d", n)
+	}
+	ready, _ := store.Get(context.Background(), readySrc.ID)
+	if ready.Status != StatusReady {
+		t.Fatalf("ready status = %s", ready.Status)
+	}
+}
+
 func TestProcessPNGReady(t *testing.T) {
 	svc, store, objects, clock, _ := mustProcessService(t)
 	owner := mustID(t)
@@ -240,7 +361,7 @@ func TestProcessPNGReady(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, _ := store.Get(context.Background(), asset.ID)
-	if got.Status != StatusReady || got.ContentType == nil || *got.ContentType != "image/png" {
+	if got.Status != StatusReady || got.ContentType == nil || *got.ContentType != "image/webp" {
 		t.Fatalf("got = %+v", got)
 	}
 	if got.Width == nil || *got.Width != 4 || *got.Height != 5 {

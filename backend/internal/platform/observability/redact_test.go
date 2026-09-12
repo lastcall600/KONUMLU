@@ -105,6 +105,7 @@ func TestStructuredLoggerRedactsSensitiveKeysWithoutDroppingIDs(t *testing.T) {
 		"request_id", "req-keep-me",
 		"trace_id", "cccccccccccccccccccccccccccccccc",
 		"error_class", "provider_error",
+		"upload_url", "https://127.0.0.1:9000/b/k?X-Amz-Signature=deadbeefsignature",
 		"authorization", "Bearer "+synthBearer,
 		"cookie", "__Host-konumlu_session="+synthSession,
 		"x-csrf-token", synthCSRF,
@@ -131,6 +132,9 @@ func TestStructuredLoggerRedactsSensitiveKeysWithoutDroppingIDs(t *testing.T) {
 	if row["authorization"] != Redacted || row["otp"] != Redacted || row["email"] != Redacted {
 		t.Fatalf("expected redacted keys: %#v", row)
 	}
+	if row["upload_url"] != Redacted {
+		t.Fatalf("upload_url = %#v", row["upload_url"])
+	}
 }
 
 func TestRedactTextCoversRepresentativeSecrets(t *testing.T) {
@@ -144,6 +148,7 @@ func TestRedactTextCoversRepresentativeSecrets(t *testing.T) {
 		synthEmail,
 		"secret=" + synthProvider,
 		synthTCKN,
+		"https://127.0.0.1:9000/konumlu-media/media/listing-images/x?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAFAKE&X-Amz-Signature=deadbeefsignature",
 	}, " ")
 	got := RedactText(dump)
 	assertNoLeak(t, got)
@@ -152,6 +157,9 @@ func TestRedactTextCoversRepresentativeSecrets(t *testing.T) {
 	}
 	if !strings.Contains(got, "Bearer "+Redacted) {
 		t.Fatalf("bearer not classified: %s", got)
+	}
+	if strings.Contains(got, "deadbeefsignature") || strings.Contains(got, "AKIAFAKE") {
+		t.Fatalf("signed storage query leaked: %s", got)
 	}
 	if RedactHeader("Authorization", "Bearer "+synthBearer) != Redacted {
 		t.Fatal("authorization header")
