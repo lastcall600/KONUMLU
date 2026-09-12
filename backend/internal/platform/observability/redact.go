@@ -19,6 +19,8 @@ var safeLogKeys = map[string]struct{}{
 	"durationms": {}, "latencyms": {},
 	"actorkind": {}, "sessionpresent": {}, "authorizationpresent": {},
 	"errorclass": {}, "provider": {}, "providerlatencyms": {}, "ok": {},
+	"authoperation": {}, "riskdecision": {}, "reasoncode": {},
+	"ratelimitdimension": {}, "challenged": {}, "challengeprovider": {}, "challengeok": {},
 	"addr": {}, "eventtype": {}, "eventversion": {}, "eventid": {},
 	"mediaid": {}, "mediastatus": {}, "processingoutcome": {}, "objectcategory": {},
 }
@@ -38,6 +40,8 @@ var sensitiveKeyExact = map[string]struct{}{
 	"databaseurl": {}, "dburl": {}, "dbpassword": {}, "databasepassword": {},
 	"awssecretaccesskey": {}, "secretkey": {}, "accesskey": {},
 	"privatekey": {}, "passkey": {}, "credential": {},
+	"signupproof": {}, "resetproof": {}, "challengetoken": {},
+	"humanchallenge": {}, "humanchallengeresponse": {}, "providersecret": {},
 	"destination": {}, "verificationsecret": {},
 	"uploadurl": {}, "signedurl": {}, "presignedurl": {}, "objectkey": {},
 }

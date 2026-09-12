@@ -1,6 +1,9 @@
 package identity
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // SessionPolicy is injected idle/absolute lifetime configuration (ADR-002 OI-002-01/02).
 // Durations are not product defaults; callers must supply positive values.
@@ -76,6 +79,213 @@ func (p IssuanceLimitPolicy) Validate() error {
 		return errInvalidIssuancePolicy
 	}
 	return nil
+}
+
+// RateLimitBucket is one independent Valkey counter window.
+// Max==0 means the dimension is unused (not a fail-open wildcard).
+type RateLimitBucket struct {
+	Max    int
+	Window time.Duration
+}
+
+func (b RateLimitBucket) enabled() bool {
+	return b.Max > 0 && b.Window > 0
+}
+
+func (b RateLimitBucket) validateOptional() error {
+	if b.Max == 0 && b.Window == 0 {
+		return nil
+	}
+	if b.Max <= 0 || b.Window <= 0 {
+		return errInvalidAbusePolicy
+	}
+	return nil
+}
+
+func (b RateLimitBucket) validateRequired() error {
+	if b.Max <= 0 || b.Window <= 0 {
+		return errInvalidAbusePolicy
+	}
+	return nil
+}
+
+// OperationLimits is the per-auth-operation dimension set.
+// Device is defined for a future trustworthy device identity and must stay unused in AUTH-A.
+type OperationLimits struct {
+	IP      RateLimitBucket
+	Account RateLimitBucket
+	Target  RateLimitBucket
+	Proof   RateLimitBucket
+	Session RateLimitBucket
+	Device  RateLimitBucket
+}
+
+func (l OperationLimits) validate() error {
+	if err := l.IP.validateRequired(); err != nil {
+		return err
+	}
+	if err := l.Account.validateOptional(); err != nil {
+		return err
+	}
+	if err := l.Target.validateOptional(); err != nil {
+		return err
+	}
+	if err := l.Proof.validateOptional(); err != nil {
+		return err
+	}
+	if err := l.Session.validateOptional(); err != nil {
+		return err
+	}
+	if l.Device.enabled() {
+		return errInvalidAbusePolicy
+	}
+	return l.Device.validateOptional()
+}
+
+// AuthAbusePolicy is the Identity-owned multi-dimensional auth rate-limit model.
+type AuthAbusePolicy struct {
+	PasswordLogin          OperationLimits
+	PasskeyLoginBegin      OperationLimits
+	PasskeyLoginFinish     OperationLimits
+	SignupStart            OperationLimits
+	SignupFinish           OperationLimits
+	SignupComplete         OperationLimits
+	ResetStart             OperationLimits
+	ResetVerify            OperationLimits
+	ResetComplete          OperationLimits
+	PasskeyRegisterBegin   OperationLimits
+	PasskeyRegisterFinish  OperationLimits
+}
+
+func (p AuthAbusePolicy) Validate() error {
+	ops := []OperationLimits{
+		p.PasswordLogin, p.PasskeyLoginBegin, p.PasskeyLoginFinish,
+		p.SignupStart, p.SignupFinish, p.SignupComplete,
+		p.ResetStart, p.ResetVerify, p.ResetComplete,
+		p.PasskeyRegisterBegin, p.PasskeyRegisterFinish,
+	}
+	for _, op := range ops {
+		if err := op.validate(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (p AuthAbusePolicy) For(op AuthOperation) (OperationLimits, bool) {
+	switch op {
+	case AuthOpPasswordLogin:
+		return p.PasswordLogin, true
+	case AuthOpPasskeyLoginBegin:
+		return p.PasskeyLoginBegin, true
+	case AuthOpPasskeyLoginFinish:
+		return p.PasskeyLoginFinish, true
+	case AuthOpSignupStart:
+		return p.SignupStart, true
+	case AuthOpSignupFinish:
+		return p.SignupFinish, true
+	case AuthOpSignupComplete:
+		return p.SignupComplete, true
+	case AuthOpResetStart:
+		return p.ResetStart, true
+	case AuthOpResetVerify:
+		return p.ResetVerify, true
+	case AuthOpResetComplete:
+		return p.ResetComplete, true
+	case AuthOpPasskeyRegisterBegin:
+		return p.PasskeyRegisterBegin, true
+	case AuthOpPasskeyRegisterFinish:
+		return p.PasskeyRegisterFinish, true
+	default:
+		return OperationLimits{}, false
+	}
+}
+
+// BuildAuthAbusePolicy fills every public auth operation from grouped buckets.
+// Device stays unused. Missing optional dimensions stay disabled.
+func BuildAuthAbusePolicy(ip, account, target, complete, sensitive RateLimitBucket) (AuthAbusePolicy, error) {
+	public := OperationLimits{IP: ip}
+	// Password login Target uses the account window, not IDENTITY_AUTH_TARGET_*.
+	// The identifier is counted before account resolve so unknown vs known
+	// identifiers share the same 429 threshold (no existence oracle).
+	passwordLogin := OperationLimits{IP: ip, Account: account, Target: account}
+	passkeyFinish := OperationLimits{IP: ip, Account: account}
+	verify := OperationLimits{IP: ip, Target: target}
+	consume := OperationLimits{IP: ip, Proof: complete}
+	enroll := OperationLimits{IP: ip, Account: sensitive, Session: sensitive}
+	p := AuthAbusePolicy{
+		PasswordLogin:         passwordLogin,
+		PasskeyLoginBegin:     public,
+		PasskeyLoginFinish:    passkeyFinish,
+		SignupStart:           public,
+		SignupFinish:          verify,
+		SignupComplete:        consume,
+		ResetStart:            public,
+		ResetVerify:           verify,
+		ResetComplete:         consume,
+		PasskeyRegisterBegin:  enroll,
+		PasskeyRegisterFinish: enroll,
+	}
+	if err := p.Validate(); err != nil {
+		return AuthAbusePolicy{}, err
+	}
+	return p, nil
+}
+
+// HumanChallengeProviderName is a server-side provider mode. It is not a vendor SDK.
+const (
+	HumanChallengeProviderNone         = "none"
+	HumanChallengeProviderFake         = "fake"
+	HumanChallengeProviderUnconfigured = "unconfigured"
+)
+
+// HumanChallengePolicy decides when a human challenge is required.
+// An empty Required set means no operation is challenged.
+type HumanChallengePolicy struct {
+	Provider   string
+	Required   map[AuthOperation]struct{}
+	Hostname   string
+	ReplayTTL  time.Duration
+}
+
+func (p HumanChallengePolicy) Validate() error {
+	switch strings.ToLower(strings.TrimSpace(p.Provider)) {
+	case "", HumanChallengeProviderNone, HumanChallengeProviderFake, HumanChallengeProviderUnconfigured:
+	default:
+		return errInvalidAbusePolicy
+	}
+	for op := range p.Required {
+		if !op.valid() {
+			return errInvalidAbusePolicy
+		}
+	}
+	if p.RequiresAny() && p.ReplayTTL <= 0 {
+		return errInvalidAbusePolicy
+	}
+	if !p.RequiresAny() && p.ReplayTTL < 0 {
+		return errInvalidAbusePolicy
+	}
+	return nil
+}
+
+func (p HumanChallengePolicy) RequiresAny() bool {
+	return len(p.Required) > 0
+}
+
+func (p HumanChallengePolicy) Requires(op AuthOperation) bool {
+	if len(p.Required) == 0 {
+		return false
+	}
+	_, ok := p.Required[op]
+	return ok
+}
+
+func (p HumanChallengePolicy) ProviderName() string {
+	n := strings.ToLower(strings.TrimSpace(p.Provider))
+	if n == "" {
+		return HumanChallengeProviderNone
+	}
+	return n
 }
 
 // SignupProofPolicy is the injected short-lived signup-proof TTL.

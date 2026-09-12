@@ -12,17 +12,17 @@ Authorization outcomes live in [AUTHORIZATION-MATRIX.md](./AUTHORIZATION-MATRIX.
 
 | Method | Path | Risk | Notes |
 |---|---|---|---|
-| POST | `/v1/auth/passkey/register/begin` | Session bind, CSRF, origin | Authenticated passkey registration |
-| POST | `/v1/auth/passkey/register/finish` | Session bind, CSRF, origin | Ceremony bound to session user |
+| POST | `/v1/auth/passkey/register/begin` | Session bind, CSRF, origin, rate limit | Authenticated passkey registration |
+| POST | `/v1/auth/passkey/register/finish` | Session bind, CSRF, origin, rate limit | Ceremony bound to session user |
 | POST | `/v1/auth/passkey/login/begin` | Public auth, origin, rate limit | Discoverable login |
-| POST | `/v1/auth/passkey/login/finish` | Session issuance, origin | Issues `__Host-` cookies |
+| POST | `/v1/auth/passkey/login/finish` | Session issuance, origin, rate limit | Issues `__Host-` cookies |
 | POST | `/v1/auth/password/login` | Session issuance, origin, rate limit | Generic 401; disabled/deleted generic 401 |
 | POST | `/v1/auth/signup/verification/start` | Public, origin, rate limit | Existence-hiding |
-| POST | `/v1/auth/signup/verification/finish` | Public, origin | Hash-only proof |
-| POST | `/v1/auth/signup/complete` | Account create + session | Proof consume |
-| POST | `/v1/auth/password/reset/start` | Recovery, origin | Hash-only proof |
-| POST | `/v1/auth/password/reset/verify` | Recovery, origin | |
-| POST | `/v1/auth/password/reset/complete` | Recovery, session revoke | No auto-login |
+| POST | `/v1/auth/signup/verification/finish` | Public, origin, rate limit | Hash-only proof |
+| POST | `/v1/auth/signup/complete` | Account create + session, rate limit | Proof consume |
+| POST | `/v1/auth/password/reset/start` | Recovery, origin, rate limit | Hash-only proof |
+| POST | `/v1/auth/password/reset/verify` | Recovery, origin, rate limit | |
+| POST | `/v1/auth/password/reset/complete` | Recovery, session revoke, rate limit | No auto-login |
 | GET | `/v1/auth/session` | Session read | Cookie session |
 | POST | `/v1/auth/logout` | Session destroy, CSRF, origin | |
 | GET | `/v1/profile/me` | Identity self-read | Session |

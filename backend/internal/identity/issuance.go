@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"strings"
 	"time"
 )
 
@@ -47,25 +46,19 @@ func (l *IssuanceLimiter) Allow(ctx context.Context, kind IdentifierKind, purpos
 	if err := l.check(ctx, destKey, l.p.DestinationMax, l.p.DestinationWindow); err != nil {
 		return err
 	}
-	ip := strings.TrimSpace(clientIP)
-	if ip == "" {
-		return nil
-	}
-	return l.check(ctx, issuanceIPKeyPrefix+string(purpose)+":"+ip, l.p.IPMax, l.p.IPWindow)
+	ipKey := issuanceIPKeyPrefix + string(purpose) + ":" + HashRateLimitSubject(subjectOrUnknown(clientIP))
+	return l.check(ctx, ipKey, l.p.IPMax, l.p.IPWindow)
 }
 
 func (l *IssuanceLimiter) check(ctx context.Context, key string, max int, window time.Duration) error {
-	n, err := l.inc.Increment(ctx, key, window)
-	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return err
-		}
-		return errUnavailable
+	err := checkRateLimit(ctx, l.inc, key, RateLimitBucket{Max: max, Window: window})
+	if err == nil {
+		return nil
 	}
-	if n > int64(max) {
+	if errors.Is(err, errRateLimited) {
 		return errChallengeThrottled
 	}
-	return nil
+	return err
 }
 
 func destinationIssuanceKey(kind IdentifierKind, purpose ChallengePurpose, canonical string) string {

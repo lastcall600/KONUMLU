@@ -18,6 +18,10 @@ var (
 	ErrChallengeConsumed   = errChallengeConsumed
 	ErrChallengeExhausted  = errChallengeExhausted
 	ErrChallengeThrottled  = errChallengeThrottled
+	ErrInvalidAbusePolicy  = errInvalidAbusePolicy
+	ErrRateLimited         = errRateLimited
+	ErrChallengeRequired   = errChallengeRequired
+	ErrChallengeFailed     = errChallengeFailed
 	ErrInvalidIdentifier   = errInvalidIdentifier
 	ErrInvalidSignupProof  = errInvalidSignupProof
 	ErrSignupProofExpired  = errSignupProofExpired
@@ -55,7 +59,8 @@ func Classify(err error) FailureClass {
 		errors.Is(err, errInvalidPolicy) ||
 		errors.Is(err, errInvalidCeremonyPolicy) ||
 		errors.Is(err, errInvalidChallengePolicy) ||
-		errors.Is(err, errInvalidIssuancePolicy) {
+		errors.Is(err, errInvalidIssuancePolicy) ||
+		errors.Is(err, errInvalidAbusePolicy) {
 		return FailureUnavailable
 	}
 	if errors.Is(err, errUnauthenticated) ||

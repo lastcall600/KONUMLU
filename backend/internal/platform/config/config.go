@@ -40,6 +40,16 @@ const (
 	envAuthIPWindow                 = "IDENTITY_AUTH_IP_WINDOW"
 	envAuthPasswordUserMaxAttempts  = "IDENTITY_AUTH_PASSWORD_USER_MAX_ATTEMPTS"
 	envAuthPasswordUserWindow       = "IDENTITY_AUTH_PASSWORD_USER_WINDOW"
+	envAuthTargetMaxAttempts        = "IDENTITY_AUTH_TARGET_MAX_ATTEMPTS"
+	envAuthTargetWindow             = "IDENTITY_AUTH_TARGET_WINDOW"
+	envAuthCompleteMaxAttempts      = "IDENTITY_AUTH_COMPLETE_MAX_ATTEMPTS"
+	envAuthCompleteWindow           = "IDENTITY_AUTH_COMPLETE_WINDOW"
+	envAuthSensitiveMaxAttempts     = "IDENTITY_AUTH_SENSITIVE_MAX_ATTEMPTS"
+	envAuthSensitiveWindow          = "IDENTITY_AUTH_SENSITIVE_WINDOW"
+	envHumanChallengeProvider       = "IDENTITY_HUMAN_CHALLENGE_PROVIDER"
+	envHumanChallengeOperations     = "IDENTITY_HUMAN_CHALLENGE_OPERATIONS"
+	envHumanChallengeHostname       = "IDENTITY_HUMAN_CHALLENGE_HOSTNAME"
+	envHumanChallengeReplayTTL      = "IDENTITY_HUMAN_CHALLENGE_REPLAY_TTL"
 	envChallengeTTL                 = "IDENTITY_VERIFICATION_CHALLENGE_TTL"
 	envChallengeMaxAttempts         = "IDENTITY_VERIFICATION_CHALLENGE_MAX_ATTEMPTS"
 	envChallengePhoneOTPDigits      = "IDENTITY_VERIFICATION_PHONE_OTP_DIGITS"
@@ -102,6 +112,13 @@ type Config struct {
 	AuthIPWindow                time.Duration
 	AuthPasswordUserMaxAttempts int
 	AuthPasswordUserWindow      time.Duration
+	AuthTargetMaxAttempts       int
+	AuthTargetWindow            time.Duration
+	AuthCompleteMaxAttempts     int
+	AuthCompleteWindow          time.Duration
+	AuthSensitiveMaxAttempts    int
+	AuthSensitiveWindow         time.Duration
+	HumanChallenge              HumanChallenge
 	ChallengeTTL                time.Duration
 	ChallengeMaxAttempts        int
 	ChallengePhoneOTPDigits     int
@@ -165,6 +182,15 @@ func (s StaffDevIDP) Empty() bool {
 
 func (s StaffDevIDP) Complete() bool {
 	return s.Enabled && s.Token != "" && s.StaffID != "" && len(s.Roles) > 0
+}
+
+// HumanChallenge is the AUTH-A provider-neutral challenge configuration.
+// No vendor secrets live here. Production must not use the fake provider.
+type HumanChallenge struct {
+	Provider   string
+	Operations []string
+	Hostname   string
+	ReplayTTL  time.Duration
 }
 
 // Load reads configuration from environment variables.
@@ -272,6 +298,43 @@ func Load() (Config, error) {
 	cfg.AuthIPWindow = ipWindow
 	cfg.AuthPasswordUserMaxAttempts = userMax
 	cfg.AuthPasswordUserWindow = userWindow
+
+	targetMax, err := optionalPositiveInt(envAuthTargetMaxAttempts, userMax)
+	if err != nil {
+		return Config{}, err
+	}
+	targetWindow, err := optionalPositiveDuration(envAuthTargetWindow, userWindow)
+	if err != nil {
+		return Config{}, err
+	}
+	completeMax, err := optionalPositiveInt(envAuthCompleteMaxAttempts, ipMax)
+	if err != nil {
+		return Config{}, err
+	}
+	completeWindow, err := optionalPositiveDuration(envAuthCompleteWindow, ipWindow)
+	if err != nil {
+		return Config{}, err
+	}
+	sensitiveMax, err := optionalPositiveInt(envAuthSensitiveMaxAttempts, userMax)
+	if err != nil {
+		return Config{}, err
+	}
+	sensitiveWindow, err := optionalPositiveDuration(envAuthSensitiveWindow, userWindow)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.AuthTargetMaxAttempts = targetMax
+	cfg.AuthTargetWindow = targetWindow
+	cfg.AuthCompleteMaxAttempts = completeMax
+	cfg.AuthCompleteWindow = completeWindow
+	cfg.AuthSensitiveMaxAttempts = sensitiveMax
+	cfg.AuthSensitiveWindow = sensitiveWindow
+
+	human, err := parseHumanChallenge(userWindow)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.HumanChallenge = human
 
 	challengeTTL, err := requiredPositiveDuration(envChallengeTTL)
 	if err != nil {
@@ -430,6 +493,63 @@ func parseStaffDevIDP() (StaffDevIDP, error) {
 		return StaffDevIDP{}, fmt.Errorf("%s, %s, %s, and %s must all be set together", envStaffDevIDPEnabled, envStaffDevIDPToken, envStaffDevIDPStaffID, envStaffDevIDPRoles)
 	}
 	return dev, nil
+}
+
+func parseHumanChallenge(fallbackWindow time.Duration) (HumanChallenge, error) {
+	provider := strings.ToLower(strings.TrimSpace(os.Getenv(envHumanChallengeProvider)))
+	if provider == "" {
+		provider = "none"
+	}
+	switch provider {
+	case "none", "fake", "unconfigured":
+	default:
+		return HumanChallenge{}, fmt.Errorf("%s must be none, fake, or unconfigured", envHumanChallengeProvider)
+	}
+	ops := splitCommaList(os.Getenv(envHumanChallengeOperations))
+	known := map[string]struct{}{
+		"password_login": {}, "passkey_login_begin": {}, "passkey_login_finish": {},
+		"signup_start": {}, "signup_finish": {}, "signup_complete": {},
+		"reset_start": {}, "reset_verify": {}, "reset_complete": {},
+		"passkey_register_begin": {}, "passkey_register_finish": {},
+	}
+	for _, op := range ops {
+		if _, ok := known[strings.ToLower(op)]; !ok {
+			return HumanChallenge{}, fmt.Errorf("%s contains unknown operation", envHumanChallengeOperations)
+		}
+	}
+	ttl := time.Duration(0)
+	if raw := strings.TrimSpace(os.Getenv(envHumanChallengeReplayTTL)); raw != "" {
+		d, err := parsePositiveDuration(envHumanChallengeReplayTTL, raw)
+		if err != nil {
+			return HumanChallenge{}, err
+		}
+		ttl = d
+	} else if len(ops) > 0 {
+		ttl = fallbackWindow
+		if ttl <= 0 {
+			ttl = 10 * time.Minute
+		}
+	}
+	return HumanChallenge{
+		Provider:   provider,
+		Operations: ops,
+		Hostname:   strings.TrimSpace(os.Getenv(envHumanChallengeHostname)),
+		ReplayTTL:  ttl,
+	}, nil
+}
+
+func optionalPositiveInt(name string, fallback int) (int, error) {
+	if strings.TrimSpace(os.Getenv(name)) == "" {
+		return fallback, nil
+	}
+	return requiredPositiveInt(name)
+}
+
+func optionalPositiveDuration(name string, fallback time.Duration) (time.Duration, error) {
+	if strings.TrimSpace(os.Getenv(name)) == "" {
+		return fallback, nil
+	}
+	return requiredPositiveDuration(name)
 }
 
 func parseOptionalBool(name string) (bool, error) {

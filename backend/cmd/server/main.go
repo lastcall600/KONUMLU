@@ -1285,11 +1285,23 @@ func newIdentityHTTP(pool *db.Pool, cfg config.Config, cacheClient *cache.Client
 	if err != nil {
 		return nil, err
 	}
+	challengePolicy, verifier, err := newHumanChallenge(cfg)
+	if err != nil {
+		return nil, err
+	}
 	guard, err := httpapi.NewAbuseGuard(cacheClient, httpapi.AuthRateLimit{
 		IPMaxAttempts:           cfg.AuthIPMaxAttempts,
 		IPWindow:                cfg.AuthIPWindow,
 		PasswordUserMaxAttempts: cfg.AuthPasswordUserMaxAttempts,
 		PasswordUserWindow:      cfg.AuthPasswordUserWindow,
+		TargetMaxAttempts:       cfg.AuthTargetMaxAttempts,
+		TargetWindow:            cfg.AuthTargetWindow,
+		CompleteMaxAttempts:     cfg.AuthCompleteMaxAttempts,
+		CompleteWindow:          cfg.AuthCompleteWindow,
+		SensitiveMaxAttempts:    cfg.AuthSensitiveMaxAttempts,
+		SensitiveWindow:         cfg.AuthSensitiveWindow,
+		Challenge:               challengePolicy,
+		Verifier:                verifier,
 	}, httpx.ClientIP(cfg.TrustedProxies))
 	if err != nil {
 		return nil, err
@@ -1324,4 +1336,29 @@ func (s identityPublicProfileSessions) Resolve(ctx context.Context, rawToken str
 		return identity.ID{}, identity.ErrUnavailable
 	}
 	return session.UserID, nil
+}
+
+func newHumanChallenge(cfg config.Config) (identity.HumanChallengePolicy, identity.HumanChallenge, error) {
+	required := make(map[identity.AuthOperation]struct{}, len(cfg.HumanChallenge.Operations))
+	for _, raw := range cfg.HumanChallenge.Operations {
+		op, ok := identity.ParseAuthOperation(raw)
+		if !ok {
+			return identity.HumanChallengePolicy{}, nil, identity.ErrInvalidAbusePolicy
+		}
+		required[op] = struct{}{}
+	}
+	policy := identity.HumanChallengePolicy{
+		Provider:  cfg.HumanChallenge.Provider,
+		Required:  required,
+		Hostname:  cfg.HumanChallenge.Hostname,
+		ReplayTTL: cfg.HumanChallenge.ReplayTTL,
+	}
+	if err := policy.Validate(); err != nil {
+		return identity.HumanChallengePolicy{}, nil, err
+	}
+	verifier, err := identity.NewHumanChallengeVerifier(cfg.HumanChallenge.Provider)
+	if err != nil {
+		return identity.HumanChallengePolicy{}, nil, err
+	}
+	return policy, verifier, nil
 }

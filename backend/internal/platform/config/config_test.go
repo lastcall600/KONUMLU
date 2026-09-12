@@ -104,6 +104,12 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.AuthPasswordUserMaxAttempts != 10 || cfg.AuthPasswordUserWindow != 15*time.Minute {
 		t.Fatalf("password user limit = %d / %s", cfg.AuthPasswordUserMaxAttempts, cfg.AuthPasswordUserWindow)
 	}
+	if cfg.AuthTargetMaxAttempts != 10 || cfg.AuthCompleteMaxAttempts != 20 || cfg.AuthSensitiveMaxAttempts != 10 {
+		t.Fatalf("inherited abuse limits target=%d complete=%d sensitive=%d", cfg.AuthTargetMaxAttempts, cfg.AuthCompleteMaxAttempts, cfg.AuthSensitiveMaxAttempts)
+	}
+	if cfg.HumanChallenge.Provider != "none" || len(cfg.HumanChallenge.Operations) != 0 {
+		t.Fatalf("human challenge = %+v", cfg.HumanChallenge)
+	}
 	if cfg.ChallengeTTL != 10*time.Minute || cfg.ChallengeMaxAttempts != 5 || cfg.ChallengePhoneOTPDigits != 6 {
 		t.Fatalf("challenge policy = %s / %d / %d", cfg.ChallengeTTL, cfg.ChallengeMaxAttempts, cfg.ChallengePhoneOTPDigits)
 	}
