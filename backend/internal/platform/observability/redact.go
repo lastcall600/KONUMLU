@@ -43,6 +43,8 @@ var sensitiveKeyExact = map[string]struct{}{
 	"signupproof": {}, "resetproof": {}, "challengetoken": {},
 	"humanchallenge": {}, "humanchallengeresponse": {}, "providersecret": {},
 	"destination": {}, "verificationsecret": {},
+	"ceremonytoken": {}, "stepup": {}, "webauthnchallenge": {},
+	"credentialrawid": {}, "passkeycredentialid": {},
 	"uploadurl": {}, "signedurl": {}, "presignedurl": {}, "objectkey": {},
 }
 

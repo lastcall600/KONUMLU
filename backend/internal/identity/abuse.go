@@ -30,6 +30,11 @@ const (
 	AuthOpResetComplete         AuthOperation = "reset_complete"
 	AuthOpPasskeyRegisterBegin  AuthOperation = "passkey_register_begin"
 	AuthOpPasskeyRegisterFinish AuthOperation = "passkey_register_finish"
+	AuthOpPasskeyRemove         AuthOperation = "passkey_remove"
+	AuthOpStepUpBegin           AuthOperation = "step_up_begin"
+	AuthOpStepUpFinish          AuthOperation = "step_up_finish"
+	AuthOpSessionRevoke         AuthOperation = "session_revoke"
+	AuthOpPasswordReauth        AuthOperation = "password_reauth"
 )
 
 func (op AuthOperation) valid() bool {
@@ -37,7 +42,9 @@ func (op AuthOperation) valid() bool {
 	case AuthOpPasswordLogin, AuthOpPasskeyLoginBegin, AuthOpPasskeyLoginFinish,
 		AuthOpSignupStart, AuthOpSignupFinish, AuthOpSignupComplete,
 		AuthOpResetStart, AuthOpResetVerify, AuthOpResetComplete,
-		AuthOpPasskeyRegisterBegin, AuthOpPasskeyRegisterFinish:
+		AuthOpPasskeyRegisterBegin, AuthOpPasskeyRegisterFinish,
+		AuthOpPasskeyRemove, AuthOpStepUpBegin, AuthOpStepUpFinish, AuthOpSessionRevoke,
+		AuthOpPasswordReauth:
 		return true
 	default:
 		return false

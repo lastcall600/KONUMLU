@@ -50,6 +50,53 @@ func (p SessionPolicy) idleExpiresAt(now, absoluteExpiresAt time.Time) time.Time
 	return idle
 }
 
+// TouchQuantum is the minimum time between durable idle-watermark writes.
+// It is derived from idle lifetime so AUTH-B does not add a second knob.
+func (p SessionPolicy) TouchQuantum() time.Duration {
+	q := time.Minute
+	if p.Idle > 0 {
+		if quarter := p.Idle / 4; quarter > 0 && quarter < q {
+			q = quarter
+		}
+	}
+	if q < 5*time.Second {
+		return 5 * time.Second
+	}
+	return q
+}
+
+// MaxStepUpTTL is the hard ceiling for recent-strong elevation.
+const MaxStepUpTTL = 15 * time.Minute
+
+// StepUpPolicy is injected recent-strong elevation lifetime.
+type StepUpPolicy struct {
+	TTL time.Duration
+}
+
+func (p StepUpPolicy) Validate() error {
+	if p.TTL <= 0 || p.TTL > MaxStepUpTTL {
+		return errInvalidStepUpPolicy
+	}
+	return nil
+}
+
+// SensitiveOperation is an Identity-owned step-up gate. It is not a Trust level.
+type SensitiveOperation string
+
+const (
+	SensitivePasskeyAdd    SensitiveOperation = "passkey_add"
+	SensitivePasskeyRemove SensitiveOperation = "passkey_remove"
+)
+
+func (op SensitiveOperation) valid() bool {
+	switch op {
+	case SensitivePasskeyAdd, SensitivePasskeyRemove:
+		return true
+	default:
+		return false
+	}
+}
+
 // VerificationChallengePolicy is injected challenge TTL, attempt cap, and OTP width.
 // Values are not product defaults; callers must supply a valid policy.
 type VerificationChallengePolicy struct {
@@ -155,6 +202,11 @@ type AuthAbusePolicy struct {
 	ResetComplete          OperationLimits
 	PasskeyRegisterBegin   OperationLimits
 	PasskeyRegisterFinish  OperationLimits
+	PasskeyRemove          OperationLimits
+	StepUpBegin            OperationLimits
+	StepUpFinish           OperationLimits
+	SessionRevoke          OperationLimits
+	PasswordReauth         OperationLimits
 }
 
 func (p AuthAbusePolicy) Validate() error {
@@ -163,6 +215,8 @@ func (p AuthAbusePolicy) Validate() error {
 		p.SignupStart, p.SignupFinish, p.SignupComplete,
 		p.ResetStart, p.ResetVerify, p.ResetComplete,
 		p.PasskeyRegisterBegin, p.PasskeyRegisterFinish,
+		p.PasskeyRemove, p.StepUpBegin, p.StepUpFinish, p.SessionRevoke,
+		p.PasswordReauth,
 	}
 	for _, op := range ops {
 		if err := op.validate(); err != nil {
@@ -196,6 +250,16 @@ func (p AuthAbusePolicy) For(op AuthOperation) (OperationLimits, bool) {
 		return p.PasskeyRegisterBegin, true
 	case AuthOpPasskeyRegisterFinish:
 		return p.PasskeyRegisterFinish, true
+	case AuthOpPasskeyRemove:
+		return p.PasskeyRemove, true
+	case AuthOpStepUpBegin:
+		return p.StepUpBegin, true
+	case AuthOpStepUpFinish:
+		return p.StepUpFinish, true
+	case AuthOpSessionRevoke:
+		return p.SessionRevoke, true
+	case AuthOpPasswordReauth:
+		return p.PasswordReauth, true
 	default:
 		return OperationLimits{}, false
 	}
@@ -225,6 +289,11 @@ func BuildAuthAbusePolicy(ip, account, target, complete, sensitive RateLimitBuck
 		ResetComplete:         consume,
 		PasskeyRegisterBegin:  enroll,
 		PasskeyRegisterFinish: enroll,
+		PasskeyRemove:         enroll,
+		StepUpBegin:           enroll,
+		StepUpFinish:          enroll,
+		SessionRevoke:         enroll,
+		PasswordReauth:        OperationLimits{IP: ip, Account: account, Session: sensitive},
 	}
 	if err := p.Validate(); err != nil {
 		return AuthAbusePolicy{}, err

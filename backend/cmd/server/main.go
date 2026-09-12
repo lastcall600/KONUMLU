@@ -1285,6 +1285,18 @@ func newIdentityHTTP(pool *db.Pool, cfg config.Config, cacheClient *cache.Client
 	if err != nil {
 		return nil, err
 	}
+	stepUp, err := identity.NewStepUp(cacheClient, identity.StepUpPolicy{TTL: cfg.StepUpTTL}, nil)
+	if err != nil {
+		return nil, err
+	}
+	bootstrap, err := identity.NewPasskeyBootstrap(cacheClient, passkeys, passwords, identity.StepUpPolicy{TTL: cfg.StepUpTTL}, nil)
+	if err != nil {
+		return nil, err
+	}
+	guardCreds, err := identity.NewCredentialGuard(passkeys, passwords, sessions)
+	if err != nil {
+		return nil, err
+	}
 	challengePolicy, verifier, err := newHumanChallenge(cfg)
 	if err != nil {
 		return nil, err
@@ -1306,7 +1318,7 @@ func newIdentityHTTP(pool *db.Pool, cfg config.Config, cacheClient *cache.Client
 	if err != nil {
 		return nil, err
 	}
-	return httpapi.New(auth, sessions, identifiers, passwords, signup, accounts, registration, reset, cfg.WebAuthnRPOrigins, guard)
+	return httpapi.New(auth, sessions, identifiers, passwords, signup, accounts, registration, reset, stepUp, guardCreds, bootstrap, cfg.WebAuthnRPOrigins, guard)
 }
 
 func newPublicProfileHTTP(pool *db.Pool, cfg config.Config, sessions *identity.Sessions) (*publicprofile.Handler, error) {

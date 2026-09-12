@@ -1105,42 +1105,62 @@ func TestRateLimitedResponseIsGeneric(t *testing.T) {
 
 func TestNewRejectsWildcardOrigins(t *testing.T) {
 	g := mustGuard(t, generousLimit(), &fakeCounter{})
-	_, err := New(&fakeAuth{}, &fakeSessions{}, &fakeIdentifiers{}, &fakePasswords{}, &fakeSignup{}, &fakeAccounts{}, &fakeRegistration{}, &fakeReset{}, []string{"https://*.example.test"}, g)
+	step := &fakeStepUp{}
+	creds := &fakeCredentials{}
+	boot := &fakeBootstrap{}
+	_, err := New(&fakeAuth{}, &fakeSessions{}, &fakeIdentifiers{}, &fakePasswords{}, &fakeSignup{}, &fakeAccounts{}, &fakeRegistration{}, &fakeReset{}, step, creds, boot, []string{"https://*.example.test"}, g)
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	_, err = New(&fakeAuth{}, &fakeSessions{}, &fakeIdentifiers{}, &fakePasswords{}, &fakeSignup{}, &fakeAccounts{}, &fakeRegistration{}, &fakeReset{}, nil, g)
+	_, err = New(&fakeAuth{}, &fakeSessions{}, &fakeIdentifiers{}, &fakePasswords{}, &fakeSignup{}, &fakeAccounts{}, &fakeRegistration{}, &fakeReset{}, step, creds, boot, nil, g)
 	if err == nil {
 		t.Fatal("expected error for empty allowlist")
 	}
-	_, err = New(&fakeAuth{}, &fakeSessions{}, &fakeIdentifiers{}, &fakePasswords{}, &fakeSignup{}, &fakeAccounts{}, &fakeRegistration{}, &fakeReset{}, []string{allowedOrigin}, nil)
+	_, err = New(&fakeAuth{}, &fakeSessions{}, &fakeIdentifiers{}, &fakePasswords{}, &fakeSignup{}, &fakeAccounts{}, &fakeRegistration{}, &fakeReset{}, step, creds, boot, []string{allowedOrigin}, nil)
 	if err == nil {
 		t.Fatal("expected error for nil abuse guard")
 	}
-	_, err = New(&fakeAuth{}, &fakeSessions{}, &fakeIdentifiers{}, &fakePasswords{}, nil, &fakeAccounts{}, &fakeRegistration{}, &fakeReset{}, []string{allowedOrigin}, g)
+	_, err = New(&fakeAuth{}, &fakeSessions{}, &fakeIdentifiers{}, &fakePasswords{}, nil, &fakeAccounts{}, &fakeRegistration{}, &fakeReset{}, step, creds, boot, []string{allowedOrigin}, g)
 	if err == nil {
 		t.Fatal("expected error for nil signup")
 	}
-	_, err = New(&fakeAuth{}, &fakeSessions{}, &fakeIdentifiers{}, &fakePasswords{}, &fakeSignup{}, nil, &fakeRegistration{}, &fakeReset{}, []string{allowedOrigin}, g)
+	_, err = New(&fakeAuth{}, &fakeSessions{}, &fakeIdentifiers{}, &fakePasswords{}, &fakeSignup{}, nil, &fakeRegistration{}, &fakeReset{}, step, creds, boot, []string{allowedOrigin}, g)
 	if err == nil {
 		t.Fatal("expected error for nil accounts")
 	}
-	_, err = New(&fakeAuth{}, &fakeSessions{}, &fakeIdentifiers{}, &fakePasswords{}, &fakeSignup{}, &fakeAccounts{}, nil, &fakeReset{}, []string{allowedOrigin}, g)
+	_, err = New(&fakeAuth{}, &fakeSessions{}, &fakeIdentifiers{}, &fakePasswords{}, &fakeSignup{}, &fakeAccounts{}, nil, &fakeReset{}, step, creds, boot, []string{allowedOrigin}, g)
 	if err == nil {
 		t.Fatal("expected error for nil passkey registrar")
 	}
-	_, err = New(&fakeAuth{}, &fakeSessions{}, &fakeIdentifiers{}, &fakePasswords{}, &fakeSignup{}, &fakeAccounts{}, &fakeRegistration{}, nil, []string{allowedOrigin}, g)
+	_, err = New(&fakeAuth{}, &fakeSessions{}, &fakeIdentifiers{}, &fakePasswords{}, &fakeSignup{}, &fakeAccounts{}, &fakeRegistration{}, nil, step, creds, boot, []string{allowedOrigin}, g)
 	if err == nil {
 		t.Fatal("expected error for nil password reset")
+	}
+	_, err = New(&fakeAuth{}, &fakeSessions{}, &fakeIdentifiers{}, &fakePasswords{}, &fakeSignup{}, &fakeAccounts{}, &fakeRegistration{}, &fakeReset{}, nil, creds, boot, []string{allowedOrigin}, g)
+	if err == nil {
+		t.Fatal("expected error for nil step-up")
+	}
+	_, err = New(&fakeAuth{}, &fakeSessions{}, &fakeIdentifiers{}, &fakePasswords{}, &fakeSignup{}, &fakeAccounts{}, &fakeRegistration{}, &fakeReset{}, step, nil, boot, []string{allowedOrigin}, g)
+	if err == nil {
+		t.Fatal("expected error for nil credentials")
+	}
+	_, err = New(&fakeAuth{}, &fakeSessions{}, &fakeIdentifiers{}, &fakePasswords{}, &fakeSignup{}, &fakeAccounts{}, &fakeRegistration{}, &fakeReset{}, step, creds, nil, []string{allowedOrigin}, g)
+	if err == nil {
+		t.Fatal("expected error for nil bootstrap")
 	}
 }
 
 type fakeAuth struct {
-	begin      identity.BeginAuthenticationResult
-	beginErr   error
-	beginCalls int
-	finishID   identity.ID
-	finishErr  error
+	begin         identity.BeginAuthenticationResult
+	beginErr      error
+	beginCalls    int
+	finishID      identity.ID
+	finishErr     error
+	stepBegin     identity.BeginAuthenticationResult
+	stepBeginErr  error
+	stepBeginUser identity.ID
+	stepFinishErr error
+	stepFinishes  int
 }
 
 func (f *fakeAuth) BeginAuthentication(context.Context) (identity.BeginAuthenticationResult, error) {
@@ -1152,14 +1172,31 @@ func (f *fakeAuth) FinishAuthentication(context.Context, identity.FinishAuthenti
 	return f.finishID, f.finishErr
 }
 
+func (f *fakeAuth) BeginStepUp(_ context.Context, userID identity.ID) (identity.BeginAuthenticationResult, error) {
+	f.stepBeginUser = userID
+	return f.stepBegin, f.stepBeginErr
+}
+
+func (f *fakeAuth) FinishStepUp(_ context.Context, userID identity.ID, _ identity.FinishAuthenticationInput) error {
+	f.stepFinishes++
+	f.stepBeginUser = userID
+	return f.stepFinishErr
+}
+
 type fakeSessions struct {
-	issued     identity.IssuedSession
-	createErr  error
-	creates    int
-	resolved   identity.Session
-	resolveErr error
-	revoked    []identity.ID
-	revokeErr  error
+	issued      identity.IssuedSession
+	createErr   error
+	creates     int
+	resolved    identity.Session
+	resolveErr  error
+	revoked     []identity.ID
+	revokeErr   error
+	listed      []identity.Session
+	listErr     error
+	othersErr   error
+	owned       identity.Session
+	ownedErr    error
+	revokedKeep identity.ID
 }
 
 func (f *fakeSessions) Create(context.Context, identity.ID, *identity.ID) (identity.IssuedSession, error) {
@@ -1174,6 +1211,115 @@ func (f *fakeSessions) Resolve(context.Context, string) (identity.Session, error
 func (f *fakeSessions) Revoke(_ context.Context, id identity.ID) error {
 	f.revoked = append(f.revoked, id)
 	return f.revokeErr
+}
+
+func (f *fakeSessions) ListActiveForUser(context.Context, identity.ID) ([]identity.Session, error) {
+	return f.listed, f.listErr
+}
+
+func (f *fakeSessions) RevokeOthers(_ context.Context, _, keep identity.ID) error {
+	f.revokedKeep = keep
+	return f.othersErr
+}
+
+func (f *fakeSessions) GetOwned(context.Context, identity.ID, identity.ID) (identity.Session, error) {
+	return f.owned, f.ownedErr
+}
+
+type fakeStepUp struct {
+	requireErr error
+	grantErr   error
+	grants     int
+	cleared    []identity.ID
+}
+
+func (f *fakeStepUp) Grant(context.Context, identity.Session) error {
+	f.grants++
+	return f.grantErr
+}
+
+func (f *fakeStepUp) Require(context.Context, identity.Session, identity.SensitiveOperation) error {
+	return f.requireErr
+}
+
+func (f *fakeStepUp) Clear(_ context.Context, sessionID identity.ID) {
+	f.cleared = append(f.cleared, sessionID)
+}
+
+type fakeBootstrap struct {
+	granted            map[identity.ID]struct{}
+	grantSignupErr     error
+	grantPasswordErr   error
+	allowErr           error
+	grantSignupCalls   int
+	grantPasswordCalls int
+	consumed           []identity.ID
+	cleared            []identity.ID
+}
+
+func (f *fakeBootstrap) ensure() {
+	if f.granted == nil {
+		f.granted = map[identity.ID]struct{}{}
+	}
+}
+
+func (f *fakeBootstrap) GrantSignup(_ context.Context, session identity.Session) error {
+	f.grantSignupCalls++
+	if f.grantSignupErr != nil {
+		return f.grantSignupErr
+	}
+	f.ensure()
+	f.granted[session.ID] = struct{}{}
+	return nil
+}
+
+func (f *fakeBootstrap) GrantPassword(_ context.Context, session identity.Session, _ []byte) error {
+	f.grantPasswordCalls++
+	if f.grantPasswordErr != nil {
+		return f.grantPasswordErr
+	}
+	f.ensure()
+	f.granted[session.ID] = struct{}{}
+	return nil
+}
+
+func (f *fakeBootstrap) Allow(_ context.Context, session identity.Session, op identity.SensitiveOperation) error {
+	if f.allowErr != nil {
+		return f.allowErr
+	}
+	if op != identity.SensitivePasskeyAdd {
+		return identity.ErrStepUpRequired
+	}
+	if _, ok := f.granted[session.ID]; ok {
+		return nil
+	}
+	return identity.ErrStepUpRequired
+}
+
+func (f *fakeBootstrap) Consume(_ context.Context, sessionID identity.ID) {
+	f.consumed = append(f.consumed, sessionID)
+	delete(f.granted, sessionID)
+}
+
+func (f *fakeBootstrap) Clear(_ context.Context, sessionID identity.ID) {
+	f.cleared = append(f.cleared, sessionID)
+	delete(f.granted, sessionID)
+}
+
+type fakeCredentials struct {
+	list    []identity.PasskeyCredential
+	listErr error
+	removed []identity.ID
+	removeErr error
+}
+
+func (f *fakeCredentials) ListPasskeys(context.Context, identity.ID) ([]identity.PasskeyCredential, error) {
+	return f.list, f.listErr
+}
+
+func (f *fakeCredentials) RemovePasskey(_ context.Context, _, credentialID identity.ID) error {
+	f.removed = append(f.removed, credentialID)
+	return f.removeErr
 }
 
 type fakeIdentifiers struct {
@@ -1331,6 +1477,9 @@ type testHandler struct {
 	accounts     *fakeAccounts
 	registration *fakeRegistration
 	reset        *fakeReset
+	stepUp       *fakeStepUp
+	credentials  *fakeCredentials
+	bootstrap    *fakeBootstrap
 	counter      *fakeCounter
 }
 
@@ -1367,8 +1516,11 @@ func newTestHandlerWithLimit(t *testing.T, policy AuthRateLimit) *testHandler {
 	accounts := &fakeAccounts{}
 	registration := &fakeRegistration{}
 	reset := &fakeReset{}
+	stepUp := &fakeStepUp{requireErr: identity.ErrStepUpRequired}
+	credentials := &fakeCredentials{}
+	bootstrap := &fakeBootstrap{}
 	counter := &fakeCounter{}
-	h, err := New(auth, sessions, identifiers, passwords, signup, accounts, registration, reset, []string{allowedOrigin}, mustGuard(t, policy, counter))
+	h, err := New(auth, sessions, identifiers, passwords, signup, accounts, registration, reset, stepUp, credentials, bootstrap, []string{allowedOrigin}, mustGuard(t, policy, counter))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1382,6 +1534,9 @@ func newTestHandlerWithLimit(t *testing.T, policy AuthRateLimit) *testHandler {
 		accounts:     accounts,
 		registration: registration,
 		reset:        reset,
+		stepUp:       stepUp,
+		credentials:  credentials,
+		bootstrap:    bootstrap,
 		counter:      counter,
 	}
 }

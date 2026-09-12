@@ -102,6 +102,20 @@ func (p *Passwords) hashForCreate(password []byte) (string, error) {
 	return hashPassword(password, p.policy)
 }
 
+func (p *Passwords) HasActive(ctx context.Context, userID ID) (bool, error) {
+	if userID.IsZero() {
+		return false, errZeroID
+	}
+	cred, err := p.store.GetPasswordCredential(ctx, userID)
+	if err != nil {
+		if errors.Is(err, errNotFound) {
+			return false, nil
+		}
+		return false, mapPasswordStoreErr(err)
+	}
+	return cred.Active() && cred.UserID == userID, nil
+}
+
 func (p *Passwords) Verify(ctx context.Context, userID ID, password []byte) (PasswordVerifyResult, error) {
 	if userID.IsZero() {
 		return PasswordVerifyResult{}, errZeroID

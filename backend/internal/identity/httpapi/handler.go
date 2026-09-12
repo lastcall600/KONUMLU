@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-webauthn/webauthn/protocol"
 
@@ -27,12 +28,36 @@ const (
 type authenticator interface {
 	BeginAuthentication(ctx context.Context) (identity.BeginAuthenticationResult, error)
 	FinishAuthentication(ctx context.Context, in identity.FinishAuthenticationInput) (identity.ID, error)
+	BeginStepUp(ctx context.Context, userID identity.ID) (identity.BeginAuthenticationResult, error)
+	FinishStepUp(ctx context.Context, userID identity.ID, in identity.FinishAuthenticationInput) error
 }
 
 type sessionManager interface {
 	Create(ctx context.Context, userID identity.ID, deviceID *identity.ID) (identity.IssuedSession, error)
 	Resolve(ctx context.Context, rawToken string) (identity.Session, error)
 	Revoke(ctx context.Context, sessionID identity.ID) error
+	ListActiveForUser(ctx context.Context, userID identity.ID) ([]identity.Session, error)
+	RevokeOthers(ctx context.Context, userID, keepSessionID identity.ID) error
+	GetOwned(ctx context.Context, actorUserID, sessionID identity.ID) (identity.Session, error)
+}
+
+type stepUpManager interface {
+	Grant(ctx context.Context, session identity.Session) error
+	Require(ctx context.Context, session identity.Session, op identity.SensitiveOperation) error
+	Clear(ctx context.Context, sessionID identity.ID)
+}
+
+type credentialGuard interface {
+	ListPasskeys(ctx context.Context, userID identity.ID) ([]identity.PasskeyCredential, error)
+	RemovePasskey(ctx context.Context, actorUserID, credentialID identity.ID) error
+}
+
+type passkeyBootstrap interface {
+	GrantSignup(ctx context.Context, session identity.Session) error
+	GrantPassword(ctx context.Context, session identity.Session, password []byte) error
+	Allow(ctx context.Context, session identity.Session, op identity.SensitiveOperation) error
+	Consume(ctx context.Context, sessionID identity.ID)
+	Clear(ctx context.Context, sessionID identity.ID)
 }
 
 type identifierResolver interface {
@@ -74,12 +99,15 @@ type Handler struct {
 	accounts    signupCompletion
 	reset       passwordReset
 	register    passkeyRegistrar
+	stepUp      stepUpManager
+	credentials credentialGuard
+	bootstrap   passkeyBootstrap
 	guard       *AbuseGuard
 	origins     map[string]struct{}
 }
 
-func New(auth authenticator, sessions sessionManager, identifiers identifierResolver, passwords passwordVerifier, signup signupVerification, accounts signupCompletion, register passkeyRegistrar, reset passwordReset, allowedOrigins []string, guard *AbuseGuard) (*Handler, error) {
-	if auth == nil || sessions == nil || identifiers == nil || passwords == nil || signup == nil || accounts == nil || register == nil || reset == nil || guard == nil {
+func New(auth authenticator, sessions sessionManager, identifiers identifierResolver, passwords passwordVerifier, signup signupVerification, accounts signupCompletion, register passkeyRegistrar, reset passwordReset, stepUp stepUpManager, credentials credentialGuard, bootstrap passkeyBootstrap, allowedOrigins []string, guard *AbuseGuard) (*Handler, error) {
+	if auth == nil || sessions == nil || identifiers == nil || passwords == nil || signup == nil || accounts == nil || register == nil || reset == nil || stepUp == nil || credentials == nil || bootstrap == nil || guard == nil {
 		return nil, identity.ErrUnavailable
 	}
 	origins := make(map[string]struct{}, len(allowedOrigins))
@@ -102,6 +130,9 @@ func New(auth authenticator, sessions sessionManager, identifiers identifierReso
 		accounts:    accounts,
 		reset:       reset,
 		register:    register,
+		stepUp:      stepUp,
+		credentials: credentials,
+		bootstrap:   bootstrap,
 		guard:       guard,
 		origins:     origins,
 	}, nil
@@ -110,6 +141,9 @@ func New(auth authenticator, sessions sessionManager, identifiers identifierReso
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/auth/passkey/register/begin", h.beginPasskeyRegister)
 	mux.HandleFunc("POST /v1/auth/passkey/register/finish", h.finishPasskeyRegister)
+	mux.HandleFunc("POST /v1/auth/passkey/register/password-reauth", h.passwordReauthForPasskeyAdd)
+	mux.HandleFunc("GET /v1/auth/passkeys", h.listPasskeys)
+	mux.HandleFunc("POST /v1/auth/passkeys/{passkeyId}/remove", h.removePasskey)
 	mux.HandleFunc("POST /v1/auth/passkey/login/begin", h.beginPasskeyLogin)
 	mux.HandleFunc("POST /v1/auth/passkey/login/finish", h.finishPasskeyLogin)
 	mux.HandleFunc("POST /v1/auth/password/login", h.passwordLogin)
@@ -119,7 +153,12 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/auth/password/reset/start", h.startPasswordReset)
 	mux.HandleFunc("POST /v1/auth/password/reset/verify", h.verifyPasswordReset)
 	mux.HandleFunc("POST /v1/auth/password/reset/complete", h.completePasswordReset)
+	mux.HandleFunc("POST /v1/auth/step-up/passkey/begin", h.beginStepUp)
+	mux.HandleFunc("POST /v1/auth/step-up/passkey/finish", h.finishStepUp)
 	mux.HandleFunc("GET /v1/auth/session", h.getSession)
+	mux.HandleFunc("GET /v1/auth/sessions", h.listSessions)
+	mux.HandleFunc("POST /v1/auth/sessions/revoke-others", h.revokeOtherSessions)
+	mux.HandleFunc("POST /v1/auth/sessions/{sessionId}/revoke", h.revokeSession)
 	mux.HandleFunc("POST /v1/auth/logout", h.logout)
 }
 
@@ -141,6 +180,9 @@ func (h *Handler) beginPasskeyRegister(w http.ResponseWriter, r *http.Request) {
 		SessionID:      session.ID,
 		ChallengeToken: req.ChallengeToken,
 	}, identity.PhaseAll) {
+		return
+	}
+	if !h.requirePasskeyAdd(w, r, session) {
 		return
 	}
 	name, display := registrationLabels(session.UserID, req.Name, req.DisplayName)
@@ -185,6 +227,9 @@ func (h *Handler) finishPasskeyRegister(w http.ResponseWriter, r *http.Request) 
 	}, identity.PhaseAll) {
 		return
 	}
+	if !h.requirePasskeyAdd(w, r, session) {
+		return
+	}
 	if _, err := h.register.FinishRegistration(r.Context(), identity.FinishRegistrationInput{
 		UserID:   session.UserID,
 		RawToken: req.CeremonyToken,
@@ -193,7 +238,39 @@ func (h *Handler) finishPasskeyRegister(w http.ResponseWriter, r *http.Request) 
 		writePasskeyRegisterError(w, err)
 		return
 	}
+	h.bootstrap.Consume(r.Context(), session.ID)
 	writeJSON(w, http.StatusOK, registerFinishResponse{OK: true})
+}
+
+func (h *Handler) passwordReauthForPasskeyAdd(w http.ResponseWriter, r *http.Request) {
+	session, ok := h.requireOriginSessionCSRF(w, r)
+	if !ok {
+		return
+	}
+	var req passwordReauthRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	if req.Password == "" || len(req.Password) > identity.MaxPasswordBytes {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	if !h.protect(w, r, identity.AbuseSubject{
+		Operation:      identity.AuthOpPasswordReauth,
+		AccountID:      session.UserID,
+		SessionID:      session.ID,
+		ChallengeToken: req.ChallengeToken,
+	}, identity.PhaseAll) {
+		return
+	}
+	password := []byte(req.Password)
+	defer clearBytes(password)
+	if err := h.bootstrap.GrantPassword(r.Context(), session, password); err != nil {
+		writePasswordReauthError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, logoutResponse{OK: true})
 }
 
 func registrationLabels(userID identity.ID, name, displayName string) (string, string) {
@@ -296,7 +373,7 @@ func (h *Handler) finishPasskeyLogin(w http.ResponseWriter, r *http.Request) {
 	}, identity.PhaseAccount) {
 		return
 	}
-	h.issueBrowserSession(w, r, userID)
+	h.issueBrowserSession(w, r, userID, true)
 }
 
 func (h *Handler) passwordLogin(w http.ResponseWriter, r *http.Request) {
@@ -356,7 +433,7 @@ func (h *Handler) passwordLogin(w http.ResponseWriter, r *http.Request) {
 		writeIdentityError(w, err)
 		return
 	}
-	h.issueBrowserSession(w, r, user.ID)
+	h.issueBrowserSession(w, r, user.ID, false)
 }
 
 func kindIsSupported(kind identity.IdentifierKind) bool {
@@ -496,7 +573,19 @@ func (h *Handler) completeSignup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "unavailable")
 		return
 	}
-	h.issueBrowserSession(w, r, got.UserID)
+	issued, ok := h.createFreshSession(w, r, got.UserID)
+	if !ok {
+		return
+	}
+	if len(password) == 0 {
+		if err := h.bootstrap.GrantSignup(r.Context(), issued.Session); err != nil {
+			h.clearElevations(r.Context(), issued.Session.ID)
+			_ = h.sessions.Revoke(r.Context(), issued.Session.ID)
+			writeError(w, http.StatusServiceUnavailable, "unavailable")
+			return
+		}
+	}
+	h.writeIssuedSession(w, issued, got.UserID)
 }
 
 func (h *Handler) startPasswordReset(w http.ResponseWriter, r *http.Request) {
@@ -629,16 +718,34 @@ func (h *Handler) completePasswordReset(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, resetCompleteResponse{OK: true})
 }
 
-func (h *Handler) issueBrowserSession(w http.ResponseWriter, r *http.Request, userID identity.ID) {
+func (h *Handler) issueBrowserSession(w http.ResponseWriter, r *http.Request, userID identity.ID, strong bool) {
+	issued, ok := h.createFreshSession(w, r, userID)
+	if !ok {
+		return
+	}
+	if strong {
+		_ = h.stepUp.Grant(r.Context(), issued.Session)
+	}
+	h.writeIssuedSession(w, issued, userID)
+}
+
+func (h *Handler) createFreshSession(w http.ResponseWriter, r *http.Request, userID identity.ID) (identity.IssuedSession, bool) {
+	if !h.rotatePredecessor(w, r) {
+		return identity.IssuedSession{}, false
+	}
 	issued, err := h.sessions.Create(r.Context(), userID, nil)
 	if err != nil {
 		writeIdentityError(w, err)
-		return
+		return identity.IssuedSession{}, false
 	}
 	if issued.RawToken == "" {
 		writeError(w, http.StatusInternalServerError, "internal")
-		return
+		return identity.IssuedSession{}, false
 	}
+	return issued, true
+}
+
+func (h *Handler) writeIssuedSession(w http.ResponseWriter, issued identity.IssuedSession, userID identity.ID) {
 	csrf, err := newCSRFToken()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal")
@@ -652,21 +759,272 @@ func (h *Handler) issueBrowserSession(w http.ResponseWriter, r *http.Request, us
 	})
 }
 
-func (h *Handler) getSession(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) rotatePredecessor(w http.ResponseWriter, r *http.Request) bool {
 	raw, ok := readCookie(r, sessionCookieName)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "unauthenticated")
-		return
+		return true
 	}
 	session, err := h.sessions.Resolve(r.Context(), raw)
-	if err != nil {
+	switch identity.Classify(err) {
+	case identity.FailureNone:
+		h.clearElevations(r.Context(), session.ID)
+		if rerr := h.sessions.Revoke(r.Context(), session.ID); rerr != nil {
+			if identity.Classify(rerr) == identity.FailureUnavailable {
+				writeIdentityError(w, rerr)
+				return false
+			}
+		}
+		return true
+	case identity.FailureUnavailable, identity.FailureInternal:
 		writeIdentityError(w, err)
+		return false
+	default:
+		return true
+	}
+}
+
+func (h *Handler) getSession(w http.ResponseWriter, r *http.Request) {
+	session, ok := h.requireSession(w, r)
+	if !ok {
 		return
 	}
 	writeJSON(w, http.StatusOK, authResponse{
 		Authenticated: true,
 		UserID:        session.UserID.String(),
 	})
+}
+
+func (h *Handler) listSessions(w http.ResponseWriter, r *http.Request) {
+	session, ok := h.requireSession(w, r)
+	if !ok {
+		return
+	}
+	list, err := h.sessions.ListActiveForUser(r.Context(), session.UserID)
+	if err != nil {
+		writeIdentityError(w, err)
+		return
+	}
+	out := make([]sessionListItem, 0, len(list))
+	for _, s := range list {
+		out = append(out, sessionListItem{
+			ID:         s.ID.String(),
+			Current:    s.ID == session.ID,
+			CreatedAt:  s.CreatedAt.UTC().Format(time.RFC3339),
+			LastSeenAt: s.LastSeenAt.UTC().Format(time.RFC3339),
+			ExpiresAt:  s.AbsoluteExpiresAt.UTC().Format(time.RFC3339),
+		})
+	}
+	writeJSON(w, http.StatusOK, sessionListResponse{Sessions: out})
+}
+
+func (h *Handler) revokeOtherSessions(w http.ResponseWriter, r *http.Request) {
+	session, ok := h.requireOriginSessionCSRF(w, r)
+	if !ok {
+		return
+	}
+	if !h.protect(w, r, identity.AbuseSubject{
+		Operation: identity.AuthOpSessionRevoke,
+		AccountID: session.UserID,
+		SessionID: session.ID,
+	}, identity.PhaseAll) {
+		return
+	}
+	others, err := h.sessions.ListActiveForUser(r.Context(), session.UserID)
+	if err != nil {
+		writeIdentityError(w, err)
+		return
+	}
+	if err := h.sessions.RevokeOthers(r.Context(), session.UserID, session.ID); err != nil {
+		writeIdentityError(w, err)
+		return
+	}
+	for _, s := range others {
+		if s.ID != session.ID {
+			h.clearElevations(r.Context(), s.ID)
+		}
+	}
+	writeJSON(w, http.StatusOK, logoutResponse{OK: true})
+}
+
+func (h *Handler) revokeSession(w http.ResponseWriter, r *http.Request) {
+	session, ok := h.requireOriginSessionCSRF(w, r)
+	if !ok {
+		return
+	}
+	targetID, err := identity.ParseID(r.PathValue("sessionId"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	if !h.protect(w, r, identity.AbuseSubject{
+		Operation: identity.AuthOpSessionRevoke,
+		AccountID: session.UserID,
+		SessionID: session.ID,
+	}, identity.PhaseAll) {
+		return
+	}
+	owned, err := h.sessions.GetOwned(r.Context(), session.UserID, targetID)
+	if err != nil {
+		writeSecurityError(w, err)
+		return
+	}
+	if err := h.sessions.Revoke(r.Context(), owned.ID); err != nil {
+		writeIdentityError(w, err)
+		return
+	}
+	h.clearElevations(r.Context(), owned.ID)
+	if owned.ID == session.ID {
+		clearSessionCookie(w)
+		clearCSRFCookie(w)
+	}
+	writeJSON(w, http.StatusOK, logoutResponse{OK: true})
+}
+
+func (h *Handler) listPasskeys(w http.ResponseWriter, r *http.Request) {
+	session, ok := h.requireSession(w, r)
+	if !ok {
+		return
+	}
+	list, err := h.credentials.ListPasskeys(r.Context(), session.UserID)
+	if err != nil {
+		writeIdentityError(w, err)
+		return
+	}
+	out := make([]passkeyListItem, 0, len(list))
+	for _, c := range list {
+		item := passkeyListItem{
+			ID:         c.ID.String(),
+			CreatedAt:  c.CreatedAt.UTC().Format(time.RFC3339),
+			Transports: append([]string(nil), c.Transports...),
+		}
+		if c.LastUsedAt != nil {
+			v := c.LastUsedAt.UTC().Format(time.RFC3339)
+			item.LastUsedAt = &v
+		}
+		out = append(out, item)
+	}
+	writeJSON(w, http.StatusOK, passkeyListResponse{Passkeys: out})
+}
+
+func (h *Handler) removePasskey(w http.ResponseWriter, r *http.Request) {
+	session, ok := h.requireOriginSessionCSRF(w, r)
+	if !ok {
+		return
+	}
+	credID, err := identity.ParseID(r.PathValue("passkeyId"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	if !h.protect(w, r, identity.AbuseSubject{
+		Operation: identity.AuthOpPasskeyRemove,
+		AccountID: session.UserID,
+		SessionID: session.ID,
+	}, identity.PhaseAll) {
+		return
+	}
+	if !h.requireRecentStrong(w, r, session, identity.SensitivePasskeyRemove) {
+		return
+	}
+	if err := h.credentials.RemovePasskey(r.Context(), session.UserID, credID); err != nil {
+		writeSecurityError(w, err)
+		return
+	}
+	h.clearElevations(r.Context(), session.ID)
+	clearSessionCookie(w)
+	clearCSRFCookie(w)
+	writeJSON(w, http.StatusOK, logoutResponse{OK: true})
+}
+
+func (h *Handler) beginStepUp(w http.ResponseWriter, r *http.Request) {
+	session, ok := h.requireOriginSessionCSRF(w, r)
+	if !ok {
+		return
+	}
+	var req challengeTokenRequest
+	if r.Body != nil && r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request")
+			return
+		}
+	}
+	if !h.protect(w, r, identity.AbuseSubject{
+		Operation:      identity.AuthOpStepUpBegin,
+		AccountID:      session.UserID,
+		SessionID:      session.ID,
+		ChallengeToken: req.ChallengeToken,
+	}, identity.PhaseAll) {
+		return
+	}
+	out, err := h.auth.BeginStepUp(r.Context(), session.UserID)
+	if err != nil {
+		writeIdentityError(w, err)
+		return
+	}
+	if out.Assertion == nil || out.RawToken == "" {
+		writeError(w, http.StatusInternalServerError, "internal")
+		return
+	}
+	writeJSON(w, http.StatusOK, beginResponse{
+		CeremonyToken: out.RawToken,
+		PublicKey:     out.Assertion.Response,
+	})
+}
+
+func (h *Handler) finishStepUp(w http.ResponseWriter, r *http.Request) {
+	session, ok := h.requireOriginSessionCSRF(w, r)
+	if !ok {
+		return
+	}
+	var req finishRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	if strings.TrimSpace(req.CeremonyToken) == "" || len(req.Credential) == 0 {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	if !h.protect(w, r, identity.AbuseSubject{
+		Operation:      identity.AuthOpStepUpFinish,
+		AccountID:      session.UserID,
+		SessionID:      session.ID,
+		ChallengeToken: req.ChallengeToken,
+	}, identity.PhaseAll) {
+		return
+	}
+	if err := h.auth.FinishStepUp(r.Context(), session.UserID, identity.FinishAuthenticationInput{
+		RawToken: req.CeremonyToken,
+		Response: req.Credential,
+	}); err != nil {
+		writeIdentityError(w, err)
+		return
+	}
+	issued, err := h.sessions.Create(r.Context(), session.UserID, nil)
+	if err != nil {
+		writeIdentityError(w, err)
+		return
+	}
+	if err := h.stepUp.Grant(r.Context(), issued.Session); err != nil {
+		_ = h.sessions.Revoke(r.Context(), issued.Session.ID)
+		writeIdentityError(w, err)
+		return
+	}
+	h.clearElevations(r.Context(), session.ID)
+	if err := h.sessions.Revoke(r.Context(), session.ID); err != nil {
+		h.clearElevations(r.Context(), issued.Session.ID)
+		_ = h.sessions.Revoke(r.Context(), issued.Session.ID)
+		writeIdentityError(w, err)
+		return
+	}
+	csrf, err := newCSRFToken()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal")
+		return
+	}
+	setSessionCookie(w, issued.RawToken)
+	setCSRFCookie(w, csrf)
+	writeJSON(w, http.StatusOK, logoutResponse{OK: true})
 }
 
 func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
@@ -683,6 +1041,7 @@ func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusForbidden, "forbidden")
 				return
 			}
+			h.clearElevations(r.Context(), session.ID)
 			if err := h.sessions.Revoke(r.Context(), session.ID); err != nil {
 				writeIdentityError(w, err)
 				return
@@ -699,6 +1058,49 @@ func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 	clearSessionCookie(w)
 	clearCSRFCookie(w)
 	writeJSON(w, http.StatusOK, logoutResponse{OK: true})
+}
+
+func (h *Handler) requireSession(w http.ResponseWriter, r *http.Request) (identity.Session, bool) {
+	raw, ok := readCookie(r, sessionCookieName)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthenticated")
+		return identity.Session{}, false
+	}
+	session, err := h.sessions.Resolve(r.Context(), raw)
+	if err != nil {
+		writeIdentityError(w, err)
+		return identity.Session{}, false
+	}
+	return session, true
+}
+
+func (h *Handler) requireRecentStrong(w http.ResponseWriter, r *http.Request, session identity.Session, op identity.SensitiveOperation) bool {
+	if err := h.stepUp.Require(r.Context(), session, op); err != nil {
+		writeSecurityError(w, err)
+		return false
+	}
+	return true
+}
+
+func (h *Handler) requirePasskeyAdd(w http.ResponseWriter, r *http.Request, session identity.Session) bool {
+	err := h.stepUp.Require(r.Context(), session, identity.SensitivePasskeyAdd)
+	if err == nil {
+		return true
+	}
+	if !errors.Is(err, identity.ErrStepUpRequired) {
+		writeSecurityError(w, err)
+		return false
+	}
+	if err := h.bootstrap.Allow(r.Context(), session, identity.SensitivePasskeyAdd); err != nil {
+		writeSecurityError(w, err)
+		return false
+	}
+	return true
+}
+
+func (h *Handler) clearElevations(ctx context.Context, sessionID identity.ID) {
+	h.stepUp.Clear(ctx, sessionID)
+	h.bootstrap.Clear(ctx, sessionID)
 }
 
 func (h *Handler) requireOrigin(w http.ResponseWriter, r *http.Request) bool {
@@ -757,6 +1159,11 @@ func (h *Handler) originAllowed(r *http.Request) bool {
 type registerBeginRequest struct {
 	Name           string `json:"name"`
 	DisplayName    string `json:"displayName"`
+	ChallengeToken string `json:"challengeToken"`
+}
+
+type passwordReauthRequest struct {
+	Password       string `json:"password"`
 	ChallengeToken string `json:"challengeToken"`
 }
 
@@ -842,8 +1249,55 @@ type logoutResponse struct {
 	OK bool `json:"ok"`
 }
 
+type sessionListItem struct {
+	ID         string `json:"id"`
+	Current    bool   `json:"current"`
+	CreatedAt  string `json:"createdAt"`
+	LastSeenAt string `json:"lastSeenAt"`
+	ExpiresAt  string `json:"expiresAt"`
+}
+
+type sessionListResponse struct {
+	Sessions []sessionListItem `json:"sessions"`
+}
+
+type passkeyListItem struct {
+	ID         string   `json:"id"`
+	CreatedAt  string   `json:"createdAt"`
+	LastUsedAt *string  `json:"lastUsedAt,omitempty"`
+	Transports []string `json:"transports,omitempty"`
+}
+
+type passkeyListResponse struct {
+	Passkeys []passkeyListItem `json:"passkeys"`
+}
+
 type errorResponse struct {
 	Error string `json:"error"`
+}
+
+func writePasswordReauthError(w http.ResponseWriter, err error) {
+	if errors.Is(err, identity.ErrStepUpRequired) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	writeIdentityError(w, err)
+}
+
+func writeSecurityError(w http.ResponseWriter, err error) {
+	if errors.Is(err, identity.ErrStepUpRequired) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	if errors.Is(err, identity.ErrLastCredential) {
+		writeError(w, http.StatusConflict, "conflict")
+		return
+	}
+	if errors.Is(err, identity.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not_found")
+		return
+	}
+	writeIdentityError(w, err)
 }
 
 func writePasskeyRegisterError(w http.ResponseWriter, err error) {

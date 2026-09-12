@@ -14,6 +14,7 @@ func setIdentityConfigEnv(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://konumlu:konumlu@127.0.0.1:5432/konumlu?sslmode=disable")
 	t.Setenv("IDENTITY_SESSION_IDLE", "1h")
 	t.Setenv("IDENTITY_SESSION_ABSOLUTE", "24h")
+	t.Setenv("IDENTITY_STEP_UP_TTL", "5m")
 	t.Setenv("IDENTITY_WEBAUTHN_CEREMONY_TTL", "2m")
 	t.Setenv("IDENTITY_AUTH_IP_MAX_ATTEMPTS", "20")
 	t.Setenv("IDENTITY_AUTH_IP_WINDOW", "15m")

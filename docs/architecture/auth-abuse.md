@@ -2,7 +2,7 @@
 
 Identity-owned substrate for consumer authentication abuse protection. This is **not** a fraud engine, **not** Trust / Güven Pasaportu, and **not** complete 0C-AUTH.
 
-AUTH-B (session lifecycle, step-up) and AUTH-C remain open. Completing AUTH-A does not make consumer auth production-complete.
+AUTH-B session lifecycle/step-up is documented in `auth-session.md`. AUTH-C remains open. Completing AUTH-A does not make consumer auth production-complete.
 
 ## Rate-limit dimensions
 
@@ -20,6 +20,10 @@ Public auth operations use independent Valkey counters. One generic IP bucket is
 | Reset verify | yes | — | challenge id hash | — | unused |
 | Reset complete | yes | — | — | reset-proof hash | unused |
 | Passkey register begin/finish | yes | session user | — | session id hash | unused |
+| Passkey remove | yes | session user | — | session id hash | unused |
+| Step-up begin/finish | yes | session user | — | session id hash | unused |
+| Session revoke / revoke-others | yes | session user | — | session id hash | unused |
+| Password re-auth (first passkey) | yes | session user | — | session id hash | unused |
 
 Device is a defined dimension and stays unused. AUTH-A does not invent browser fingerprinting.
 
@@ -98,7 +102,7 @@ Grouped policy (existing login IP/account env vars remain required). Optional ov
 
 - `IDENTITY_AUTH_TARGET_*` (signup/reset verify-by-challenge-id; password-login identifier target uses `IDENTITY_AUTH_PASSWORD_USER_*`)
 - `IDENTITY_AUTH_COMPLETE_*` (signup/reset complete)
-- `IDENTITY_AUTH_SENSITIVE_*` (authenticated passkey enrollment)
+- `IDENTITY_AUTH_SENSITIVE_*` (authenticated passkey enrollment, passkey remove, step-up, session revoke; password re-auth also uses this session window plus password-login IP/account)
 - `IDENTITY_HUMAN_CHALLENGE_PROVIDER`
 - `IDENTITY_HUMAN_CHALLENGE_OPERATIONS`
 - `IDENTITY_HUMAN_CHALLENGE_HOSTNAME`
@@ -106,8 +110,8 @@ Grouped policy (existing login IP/account env vars remain required). Optional ov
 
 No production challenge secrets are required for local proof.
 
-## AUTH-B / AUTH-C (deferred)
+## AUTH-B / AUTH-C
 
-AUTH-B: session security center, revoke-other, session rotation, device binding, step-up session state, Touch wiring.
+AUTH-B is implemented locally (`docs/architecture/auth-session.md`): session rotation, idle Touch, security-center HTTP, passkey list/remove, Valkey Step-Up. HumanChallenge is not Step-Up. Device binding and auth audit events are not AUTH-B.
 
-AUTH-C and remaining 0C-AUTH: production human-challenge vendor adapter, password-reset UX hardening beyond abuse primitives, full fraud/review pipeline. Remember Me is **not** a current KONUMLU requirement and is not AUTH-C work. Passkey-first + optional Argon2id password fallback is unchanged.
+AUTH-C and remaining 0C-AUTH: production human-challenge vendor adapter, durable auth security events, email/phone change and authenticated password-change product endpoints (reuse Step-Up), device binding schema, periodic session rotation (OI-002-03). Remember Me is **not** a current KONUMLU requirement. Passkey-first + optional Argon2id password fallback is unchanged.

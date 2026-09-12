@@ -128,6 +128,7 @@ func TestPasskeyRegisterEnrollmentIsRateLimited(t *testing.T) {
 	})
 	userID := mustID(t)
 	h.sessions.resolved = identity.Session{ID: mustID(t), UserID: userID}
+	h.stepUp.requireErr = nil
 	h.registration.begin = identity.BeginRegistrationResult{
 		RawToken: "t",
 		Creation: &protocol.CredentialCreation{},

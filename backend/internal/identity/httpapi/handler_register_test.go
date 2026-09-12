@@ -294,7 +294,8 @@ func TestPasskeyRegisterErrorDoesNotLeakInternals(t *testing.T) {
 func newAuthedRegisterHandler(t *testing.T) *testHandler {
 	t.Helper()
 	h := newTestHandler(t)
-	h.sessions.resolved = identity.Session{UserID: mustID(t)}
+	h.sessions.resolved = identity.Session{ID: mustID(t), UserID: mustID(t)}
+	h.stepUp.requireErr = nil
 	h.registration.begin = validRegisterBegin()
 	return h
 }

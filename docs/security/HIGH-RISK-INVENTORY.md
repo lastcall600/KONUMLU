@@ -12,11 +12,16 @@ Authorization outcomes live in [AUTHORIZATION-MATRIX.md](./AUTHORIZATION-MATRIX.
 
 | Method | Path | Risk | Notes |
 |---|---|---|---|
-| POST | `/v1/auth/passkey/register/begin` | Session bind, CSRF, origin, rate limit | Authenticated passkey registration |
-| POST | `/v1/auth/passkey/register/finish` | Session bind, CSRF, origin, rate limit | Ceremony bound to session user |
+| POST | `/v1/auth/passkey/register/begin` | Session bind, CSRF, origin, rate limit, step-up or first-passkey bootstrap | Authenticated passkey add |
+| POST | `/v1/auth/passkey/register/finish` | Session bind, CSRF, origin, rate limit, step-up or bootstrap; consume bootstrap | Ceremony bound to session user |
+| POST | `/v1/auth/passkey/register/password-reauth` | Session, CSRF, origin, rate limit, Argon2id | First-passkey only; scoped `passkey_add`; generic 401 |
+| GET | `/v1/auth/passkeys` | Session read | Metadata only; no credential secrets |
+| POST | `/v1/auth/passkeys/{passkeyId}/remove` | CSRF, origin, step-up, last-factor | Owner only; success logout-all |
 | POST | `/v1/auth/passkey/login/begin` | Public auth, origin, rate limit | Discoverable login |
-| POST | `/v1/auth/passkey/login/finish` | Session issuance, origin, rate limit | Issues `__Host-` cookies |
-| POST | `/v1/auth/password/login` | Session issuance, origin, rate limit | Generic 401; disabled/deleted generic 401 |
+| POST | `/v1/auth/passkey/login/finish` | Session issuance, origin, rate limit | Fresh session; passkey login may Grant step-up |
+| POST | `/v1/auth/password/login` | Session issuance, origin, rate limit | Generic 401; no step-up Grant |
+| POST | `/v1/auth/step-up/passkey/begin` | Session, CSRF, origin, rate limit | Existing user passkey assertion |
+| POST | `/v1/auth/step-up/passkey/finish` | Session, CSRF, origin, rate limit | Rotates session; Valkey elevation |
 | POST | `/v1/auth/signup/verification/start` | Public, origin, rate limit | Existence-hiding |
 | POST | `/v1/auth/signup/verification/finish` | Public, origin, rate limit | Hash-only proof |
 | POST | `/v1/auth/signup/complete` | Account create + session, rate limit | Proof consume |
@@ -24,6 +29,9 @@ Authorization outcomes live in [AUTHORIZATION-MATRIX.md](./AUTHORIZATION-MATRIX.
 | POST | `/v1/auth/password/reset/verify` | Recovery, origin, rate limit | |
 | POST | `/v1/auth/password/reset/complete` | Recovery, session revoke, rate limit | No auto-login |
 | GET | `/v1/auth/session` | Session read | Cookie session |
+| GET | `/v1/auth/sessions` | Session list | Own active sessions; no token/hash |
+| POST | `/v1/auth/sessions/{sessionId}/revoke` | Session destroy, CSRF, origin | Owner only; current clears cookies |
+| POST | `/v1/auth/sessions/revoke-others` | Session destroy, CSRF, origin | Keeps current; no epoch bump |
 | POST | `/v1/auth/logout` | Session destroy, CSRF, origin | |
 | GET | `/v1/profile/me` | Identity self-read | Session |
 | PATCH | `/v1/profile/me` | Identity self-write, CSRF | Restricted/removed still self-readable |

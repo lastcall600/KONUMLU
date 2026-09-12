@@ -36,6 +36,7 @@ const (
 	envWebAuthnCeremonyTTL          = "IDENTITY_WEBAUTHN_CEREMONY_TTL"
 	envSessionIdle                  = "IDENTITY_SESSION_IDLE"
 	envSessionAbsolute              = "IDENTITY_SESSION_ABSOLUTE"
+	envStepUpTTL                    = "IDENTITY_STEP_UP_TTL"
 	envAuthIPMaxAttempts            = "IDENTITY_AUTH_IP_MAX_ATTEMPTS"
 	envAuthIPWindow                 = "IDENTITY_AUTH_IP_WINDOW"
 	envAuthPasswordUserMaxAttempts  = "IDENTITY_AUTH_PASSWORD_USER_MAX_ATTEMPTS"
@@ -108,6 +109,7 @@ type Config struct {
 	WebAuthnCeremonyTTL         time.Duration
 	SessionIdle                 time.Duration
 	SessionAbsolute             time.Duration
+	StepUpTTL                    time.Duration
 	AuthIPMaxAttempts           int
 	AuthIPWindow                time.Duration
 	AuthPasswordUserMaxAttempts int
@@ -271,6 +273,18 @@ func Load() (Config, error) {
 	}
 	cfg.SessionIdle = idle
 	cfg.SessionAbsolute = absolute
+
+	stepUpTTL, err := requiredPositiveDuration(envStepUpTTL)
+	if err != nil {
+		return Config{}, err
+	}
+	if stepUpTTL > 15*time.Minute {
+		return Config{}, fmt.Errorf("%s must not exceed 15m", envStepUpTTL)
+	}
+	if stepUpTTL > idle {
+		return Config{}, fmt.Errorf("%s must be less than or equal to %s", envStepUpTTL, envSessionIdle)
+	}
+	cfg.StepUpTTL = stepUpTTL
 
 	ceremonyTTL, err := requiredPositiveDuration(envWebAuthnCeremonyTTL)
 	if err != nil {

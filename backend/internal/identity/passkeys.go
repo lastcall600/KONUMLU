@@ -93,6 +93,17 @@ func (p *Passkeys) RecordSuccessfulUse(ctx context.Context, id ID, signCount int
 	return nil
 }
 
+func (p *Passkeys) Get(ctx context.Context, id ID) (PasskeyCredential, error) {
+	if id.IsZero() {
+		return PasskeyCredential{}, errZeroID
+	}
+	c, err := p.store.GetPasskey(ctx, id)
+	if err != nil {
+		return PasskeyCredential{}, mapPasskeyStoreErr(err)
+	}
+	return c, nil
+}
+
 func (p *Passkeys) Revoke(ctx context.Context, id ID) error {
 	if id.IsZero() {
 		return errZeroID
