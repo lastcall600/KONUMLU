@@ -32,6 +32,9 @@ var (
 	ErrIdentifierConflict  = errIdentifierConflict
 	ErrInvalidPassword     = errInvalidPassword
 	ErrPasswordTooLong     = errPasswordTooLong
+	ErrStepUpRequired      = errStepUpRequired
+	ErrLastCredential      = errLastCredential
+	ErrNotFound            = errNotFound
 )
 
 // FailureClass is a coarse, non-sensitive mapping for the HTTP edge.
@@ -60,7 +63,8 @@ func Classify(err error) FailureClass {
 		errors.Is(err, errInvalidCeremonyPolicy) ||
 		errors.Is(err, errInvalidChallengePolicy) ||
 		errors.Is(err, errInvalidIssuancePolicy) ||
-		errors.Is(err, errInvalidAbusePolicy) {
+		errors.Is(err, errInvalidAbusePolicy) ||
+		errors.Is(err, errInvalidStepUpPolicy) {
 		return FailureUnavailable
 	}
 	if errors.Is(err, errUnauthenticated) ||

@@ -110,6 +110,11 @@ func (s *Sessions) Resolve(ctx context.Context, rawToken string) (Session, error
 	}
 
 	if cached, hit, err := s.resolveHot(ctx, hash); hit {
+		if err == nil {
+			if terr := s.maybeTouch(ctx, cached); terr != nil {
+				return Session{}, terr
+			}
+		}
 		return cached, err
 	}
 
@@ -129,7 +134,27 @@ func (s *Sessions) Resolve(ctx context.Context, rawToken string) (Session, error
 		return Session{}, err
 	}
 	s.populateHot(ctx, session, user, device)
+	if err := s.maybeTouch(ctx, session); err != nil {
+		return Session{}, err
+	}
 	return session, nil
+}
+
+func (s *Sessions) maybeTouch(ctx context.Context, session Session) error {
+	now := s.now()
+	if !session.LastSeenAt.IsZero() && now.Sub(session.LastSeenAt) < s.policy.TouchQuantum() {
+		return nil
+	}
+	err := s.Touch(ctx, session.ID)
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, errSessionRevoked) || errors.Is(err, errSessionIdleExpired) ||
+		errors.Is(err, errSessionAbsExpired) || errors.Is(err, errAccountIneligible) ||
+		errors.Is(err, errDeviceRevoked) || errors.Is(err, errUnauthenticated) {
+		return err
+	}
+	return nil
 }
 
 func (s *Sessions) Touch(ctx context.Context, sessionID ID) error {
@@ -146,6 +171,68 @@ func (s *Sessions) Touch(ctx context.Context, sessionID ID) error {
 	}
 	s.invalidateHot(ctx, session.TokenHash)
 	return nil
+}
+
+func (s *Sessions) ListActiveForUser(ctx context.Context, userID ID) ([]Session, error) {
+	if userID.IsZero() {
+		return nil, errZeroID
+	}
+	list, err := s.store.ListSessionsForUser(ctx, userID)
+	if err != nil {
+		return nil, mapStoreErr(err)
+	}
+	now := s.now()
+	out := make([]Session, 0, len(list))
+	for _, session := range list {
+		if session.UserID != userID {
+			continue
+		}
+		if err := session.DurableValid(now); err != nil {
+			continue
+		}
+		session.TokenHash = nil
+		out = append(out, session)
+	}
+	return out, nil
+}
+
+func (s *Sessions) RevokeOthers(ctx context.Context, userID, keepSessionID ID) error {
+	if userID.IsZero() || keepSessionID.IsZero() {
+		return errZeroID
+	}
+	keep, err := s.store.GetSession(ctx, keepSessionID)
+	if err != nil {
+		return mapLookupErr(err, errNotFound)
+	}
+	if keep.UserID != userID {
+		return errNotFound
+	}
+	if err := s.authorizeStored(ctx, keep); err != nil {
+		return err
+	}
+	hashes, err := s.store.RevokeOtherSessionsForUser(ctx, userID, keepSessionID, s.now())
+	if err != nil {
+		return mapStoreErr(err)
+	}
+	for _, hash := range hashes {
+		s.invalidateHot(ctx, hash)
+	}
+	return nil
+}
+
+func (s *Sessions) GetOwned(ctx context.Context, actorUserID, sessionID ID) (Session, error) {
+	if actorUserID.IsZero() || sessionID.IsZero() {
+		return Session{}, errZeroID
+	}
+	session, err := s.store.GetSession(ctx, sessionID)
+	if err != nil {
+		return Session{}, mapLookupErr(err, errNotFound)
+	}
+	if session.UserID != actorUserID {
+		return Session{}, errNotFound
+	}
+	session.TokenHash = nil
+	return session, nil
 }
 
 func (s *Sessions) Revoke(ctx context.Context, sessionID ID) error {
@@ -224,7 +311,9 @@ func mapStoreErr(err error) error {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return err
 	}
-	if errors.Is(err, errUnavailable) || errors.Is(err, errNotFound) || errors.Is(err, errZeroID) {
+	if errors.Is(err, errUnavailable) || errors.Is(err, errNotFound) || errors.Is(err, errZeroID) ||
+		errors.Is(err, errSessionRevoked) || errors.Is(err, errUnauthenticated) ||
+		errors.Is(err, errSessionIdleExpired) || errors.Is(err, errSessionAbsExpired) {
 		return err
 	}
 	return errUnavailable

@@ -18,6 +18,8 @@ type sessionStore interface {
 	UpdateSessionActivity(ctx context.Context, id ID, lastSeenAt, idleExpiresAt time.Time) error
 	RevokeSession(ctx context.Context, id ID, at time.Time) error
 	RevokeSessionsForUser(ctx context.Context, userID ID, at time.Time) (int64, error)
+	ListSessionsForUser(ctx context.Context, userID ID) ([]Session, error)
+	RevokeOtherSessionsForUser(ctx context.Context, userID, keepSessionID ID, at time.Time) ([][]byte, error)
 }
 
 // passkeyStore is the Identity persistence surface for durable passkey credentials.

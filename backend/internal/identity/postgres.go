@@ -132,11 +132,27 @@ func (p *PostgresStore) UpdateSessionActivity(ctx context.Context, id ID, lastSe
 	if p.db == nil {
 		return errUnavailable
 	}
-	_, err := p.db.Exec(ctx, `
+	n, err := p.db.Exec(ctx, `
 		UPDATE identity.sessions
 		SET last_seen_at = $2, idle_expires_at = $3
-		WHERE id = $1 AND revoked_at IS NULL`, id, lastSeenAt, idleExpiresAt)
-	return mapDBErr(err)
+		WHERE id = $1
+		  AND revoked_at IS NULL
+		  AND idle_expires_at > $2
+		  AND absolute_expires_at > $2`, id, lastSeenAt, idleExpiresAt)
+	if err != nil {
+		return mapDBErr(err)
+	}
+	if n == 0 {
+		session, gerr := p.GetSession(ctx, id)
+		if gerr != nil {
+			return mapLookupErr(gerr, errUnauthenticated)
+		}
+		if session.RevokedAt != nil {
+			return errSessionRevoked
+		}
+		return errUnauthenticated
+	}
+	return nil
 }
 
 func (p *PostgresStore) RevokeSession(ctx context.Context, id ID, at time.Time) error {
@@ -209,6 +225,67 @@ func (p *PostgresStore) RevokeSessionsForUserTx(ctx context.Context, tx transact
 		return 0, errUnavailable
 	}
 	return epoch, nil
+}
+
+func (p *PostgresStore) ListSessionsForUser(ctx context.Context, userID ID) ([]Session, error) {
+	if p.db == nil {
+		return nil, errUnavailable
+	}
+	if userID.IsZero() {
+		return nil, errZeroID
+	}
+	rows, err := p.db.Query(ctx, `
+		SELECT id, user_id, device_id, token_hash,
+			created_at, last_seen_at, idle_expires_at, absolute_expires_at, revoked_at
+		FROM identity.sessions
+		WHERE user_id = $1
+		ORDER BY created_at DESC, id DESC`, userID)
+	if err != nil {
+		return nil, mapDBErr(err)
+	}
+	defer rows.Close()
+	out := make([]Session, 0)
+	for rows.Next() {
+		s, scanErr := scanSession(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		out = append(out, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, mapDBErr(err)
+	}
+	return out, nil
+}
+
+func (p *PostgresStore) RevokeOtherSessionsForUser(ctx context.Context, userID, keepSessionID ID, at time.Time) ([][]byte, error) {
+	if p.db == nil {
+		return nil, errUnavailable
+	}
+	if userID.IsZero() || keepSessionID.IsZero() {
+		return nil, errZeroID
+	}
+	rows, err := p.db.Query(ctx, `
+		UPDATE identity.sessions
+		SET revoked_at = $3
+		WHERE user_id = $1 AND id <> $2 AND revoked_at IS NULL
+		RETURNING token_hash`, userID, keepSessionID, at)
+	if err != nil {
+		return nil, mapDBErr(err)
+	}
+	defer rows.Close()
+	out := make([][]byte, 0)
+	for rows.Next() {
+		var hash []byte
+		if scanErr := rows.Scan(&hash); scanErr != nil {
+			return nil, mapDBErr(scanErr)
+		}
+		out = append(out, cloneBytes(hash))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, mapDBErr(err)
+	}
+	return out, nil
 }
 
 func (p *PostgresStore) InsertPasskey(ctx context.Context, credential PasskeyCredential) error {

@@ -12,6 +12,7 @@ func setRequiredLoadEnv(t *testing.T) {
 	t.Setenv(envDatabaseURL, "postgres://konumlu:konumlu@127.0.0.1:5432/konumlu?sslmode=disable")
 	t.Setenv(envSessionIdle, "1h")
 	t.Setenv(envSessionAbsolute, "24h")
+	t.Setenv(envStepUpTTL, "5m")
 	t.Setenv(envWebAuthnCeremonyTTL, "2m")
 	setAuthRateLimitEnv(t)
 	setVerificationSignupEnv(t)

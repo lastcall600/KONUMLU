@@ -147,6 +147,52 @@ func TestFinishAuthenticationConsumesOnceAndRejectsWrongKind(t *testing.T) {
 	}
 }
 
+func TestStepUpCeremonyBoundToUserAndRejectedByLoginFinish(t *testing.T) {
+	ctx := context.Background()
+	auth, rp, pstore, accounts, now := newTestAuthenticationReady(t)
+	user, cred := seedActivePasskeyUser(t, pstore, accounts, now, 4)
+
+	out, err := auth.BeginStepUp(ctx, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.RawToken == "" || out.Assertion == nil {
+		t.Fatal("step-up must return options")
+	}
+	rp.parsed = assertionParsed(cred.CredentialID, user.ID)
+	rp.cred = &webauthn.Credential{
+		ID:            cloneBytes(cred.CredentialID),
+		Authenticator: webauthn.Authenticator{SignCount: 8},
+	}
+	if err := auth.FinishStepUp(ctx, user.ID, FinishAuthenticationInput{
+		RawToken: out.RawToken,
+		Response: []byte(`{"type":"public-key"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	login, err := auth.BeginAuthentication(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	step, err := auth.BeginStepUp(ctx, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := auth.FinishAuthentication(ctx, FinishAuthenticationInput{
+		RawToken: step.RawToken,
+		Response: []byte(`{"type":"public-key"}`),
+	}); err != errCeremonyKind {
+		t.Fatalf("login finish must reject step-up ceremony: %v", err)
+	}
+	if err := auth.FinishStepUp(ctx, user.ID, FinishAuthenticationInput{
+		RawToken: login.RawToken,
+		Response: []byte(`{"type":"public-key"}`),
+	}); err != errCeremonyKind {
+		t.Fatalf("step-up finish must reject login ceremony: %v", err)
+	}
+}
+
 func TestFinishAuthenticationUnknownCredential(t *testing.T) {
 	ctx := context.Background()
 	auth, rp, pstore, _, now := newTestAuthenticationReady(t)
@@ -457,6 +503,11 @@ type fakeAuthRP struct {
 	handlerUser   *PasskeyUser
 }
 
+func (f *fakeAuthRP) BeginLogin(user webauthn.User, opts ...webauthn.LoginOption) (*protocol.CredentialAssertion, *webauthn.SessionData, error) {
+	_ = user
+	return f.BeginDiscoverableLogin(opts...)
+}
+
 func (f *fakeAuthRP) BeginDiscoverableLogin(opts ...webauthn.LoginOption) (*protocol.CredentialAssertion, *webauthn.SessionData, error) {
 	f.beginOpts = opts
 	if f.beginErr != nil {
@@ -507,6 +558,11 @@ func (f *fakeAuthRP) ValidateDiscoverableLogin(handler webauthn.DiscoverableUser
 	return &webauthn.Credential{
 		Authenticator: webauthn.Authenticator{SignCount: 1},
 	}, nil
+}
+
+func (f *fakeAuthRP) ValidateLogin(user webauthn.User, session webauthn.SessionData, parsed *protocol.ParsedCredentialAssertionData) (*webauthn.Credential, error) {
+	_ = user
+	return f.ValidateDiscoverableLogin(nil, session, parsed)
 }
 
 type memAccounts struct {

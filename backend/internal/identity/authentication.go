@@ -15,8 +15,10 @@ import (
 // Tests substitute a fake; production wraps go-webauthn.
 type authenticationRP interface {
 	BeginDiscoverableLogin(opts ...webauthn.LoginOption) (*protocol.CredentialAssertion, *webauthn.SessionData, error)
+	BeginLogin(user webauthn.User, opts ...webauthn.LoginOption) (*protocol.CredentialAssertion, *webauthn.SessionData, error)
 	ParseAssertionResponse(raw []byte) (*protocol.ParsedCredentialAssertionData, error)
 	ValidateDiscoverableLogin(handler webauthn.DiscoverableUserHandler, session webauthn.SessionData, parsed *protocol.ParsedCredentialAssertionData) (*webauthn.Credential, error)
+	ValidateLogin(user webauthn.User, session webauthn.SessionData, parsed *protocol.ParsedCredentialAssertionData) (*webauthn.Credential, error)
 }
 
 type accountReader interface {
@@ -28,6 +30,13 @@ func (g *goWebAuthn) BeginDiscoverableLogin(opts ...webauthn.LoginOption) (*prot
 		return nil, nil, errUnavailable
 	}
 	return g.wa.BeginDiscoverableLogin(opts...)
+}
+
+func (g *goWebAuthn) BeginLogin(user webauthn.User, opts ...webauthn.LoginOption) (*protocol.CredentialAssertion, *webauthn.SessionData, error) {
+	if g == nil || g.wa == nil {
+		return nil, nil, errUnavailable
+	}
+	return g.wa.BeginLogin(user, opts...)
 }
 
 func (g *goWebAuthn) ParseAssertionResponse(raw []byte) (*protocol.ParsedCredentialAssertionData, error) {
@@ -46,6 +55,17 @@ func (g *goWebAuthn) ValidateDiscoverableLogin(handler webauthn.DiscoverableUser
 		return nil, errUnavailable
 	}
 	cred, err := g.wa.ValidateDiscoverableLogin(handler, session, parsed)
+	if err != nil {
+		return nil, mapAuthVerifyErr(err)
+	}
+	return cred, nil
+}
+
+func (g *goWebAuthn) ValidateLogin(user webauthn.User, session webauthn.SessionData, parsed *protocol.ParsedCredentialAssertionData) (*webauthn.Credential, error) {
+	if g == nil || g.wa == nil {
+		return nil, errUnavailable
+	}
+	cred, err := g.wa.ValidateLogin(user, session, parsed)
 	if err != nil {
 		return nil, mapAuthVerifyErr(err)
 	}
@@ -119,6 +139,9 @@ func (a *Authentication) FinishAuthentication(ctx context.Context, in FinishAuth
 	if state.Kind != CeremonyAuthentication {
 		return ID{}, errCeremonyKind
 	}
+	if state.UserID != nil {
+		return ID{}, errCeremonyKind
+	}
 
 	var session webauthn.SessionData
 	if err := json.Unmarshal(state.SessionData, &session); err != nil {
@@ -156,6 +179,111 @@ func (a *Authentication) FinishAuthentication(ctx context.Context, in FinishAuth
 		return ID{}, err
 	}
 	return user.ID, nil
+}
+
+func (a *Authentication) BeginStepUp(ctx context.Context, userID ID) (BeginAuthenticationResult, error) {
+	if userID.IsZero() {
+		return BeginAuthenticationResult{}, errZeroID
+	}
+	user, err := a.accounts.GetUser(ctx, userID)
+	if err != nil {
+		return BeginAuthenticationResult{}, mapLookupErr(err, errAccountIneligible)
+	}
+	if !user.EligibleForSession() || user.ID != userID {
+		return BeginAuthenticationResult{}, errAccountIneligible
+	}
+	active, err := a.passkeys.ListActiveForUser(ctx, userID)
+	if err != nil {
+		return BeginAuthenticationResult{}, err
+	}
+	if len(active) == 0 {
+		return BeginAuthenticationResult{}, errUnknownCredential
+	}
+	placeholder := authenticationPlaceholderName(userID)
+	waUser := PasskeyUser{
+		ID:          userID,
+		Name:        placeholder,
+		DisplayName: placeholder,
+		Passkeys:    active,
+	}
+	assertion, session, err := a.rp.BeginLogin(waUser, webauthn.WithUserVerification(protocol.VerificationRequired))
+	if err != nil {
+		return BeginAuthenticationResult{}, mapAuthBeginErr(err)
+	}
+	if assertion == nil || session == nil {
+		return BeginAuthenticationResult{}, errUnavailable
+	}
+	sessionBytes, err := json.Marshal(session)
+	if err != nil || len(sessionBytes) == 0 {
+		return BeginAuthenticationResult{}, errUnavailable
+	}
+	issued, err := a.ceremonies.Create(ctx, CeremonyAuthentication, &userID, sessionBytes)
+	if err != nil {
+		return BeginAuthenticationResult{}, err
+	}
+	return BeginAuthenticationResult{Assertion: assertion, RawToken: issued.RawToken}, nil
+}
+
+func (a *Authentication) FinishStepUp(ctx context.Context, userID ID, in FinishAuthenticationInput) error {
+	if userID.IsZero() {
+		return errZeroID
+	}
+	state, err := a.ceremonies.Consume(ctx, in.RawToken)
+	if err != nil {
+		return err
+	}
+	if state.Kind != CeremonyAuthentication {
+		return errCeremonyKind
+	}
+	if state.UserID == nil || *state.UserID != userID {
+		return errCeremonyKind
+	}
+
+	var session webauthn.SessionData
+	if err := json.Unmarshal(state.SessionData, &session); err != nil {
+		return errUnavailable
+	}
+
+	parsed, err := a.rp.ParseAssertionResponse(in.Response)
+	if err != nil {
+		return mapAuthVerifyErr(err)
+	}
+	if parsed == nil {
+		return errWebAuthnVerification
+	}
+
+	cred, user, err := a.resolveAssertionSubject(ctx, parsed.RawID)
+	if err != nil {
+		return err
+	}
+	if user.ID != userID || cred.UserID != userID {
+		return errUnknownCredential
+	}
+
+	placeholder := authenticationPlaceholderName(userID)
+	waUser := PasskeyUser{
+		ID:          userID,
+		Name:        placeholder,
+		DisplayName: placeholder,
+		Passkeys:    []PasskeyCredential{cred},
+	}
+	verified, err := a.rp.ValidateLogin(waUser, session, parsed)
+	if err != nil {
+		return mapAuthVerifyErr(err)
+	}
+	if verified == nil {
+		return errWebAuthnVerification
+	}
+	if verified.Authenticator.CloneWarning {
+		return errCounterConflict
+	}
+	if err := a.passkeys.RecordSuccessfulUse(ctx, cred.ID, int64(verified.Authenticator.SignCount), verified.Flags.BackupState); err != nil {
+		if errors.Is(err, errSignCountNotMonotonic) {
+			return errCounterConflict
+		}
+		return err
+	}
+	return nil
 }
 
 func (a *Authentication) discoverableUser(ctx context.Context) webauthn.DiscoverableUserHandler {

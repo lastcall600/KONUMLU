@@ -52,6 +52,7 @@ func TestLoadDefaults(t *testing.T) {
 	t.Setenv(envDatabaseURL, "postgres://konumlu:konumlu@127.0.0.1:5432/konumlu?sslmode=disable")
 	t.Setenv(envSessionIdle, "1h")
 	t.Setenv(envSessionAbsolute, "24h")
+	t.Setenv(envStepUpTTL, "5m")
 	t.Setenv(envWebAuthnCeremonyTTL, "2m")
 	setAuthRateLimitEnv(t)
 	setVerificationSignupEnv(t)
@@ -76,6 +77,9 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.SessionIdle != time.Hour || cfg.SessionAbsolute != 24*time.Hour {
 		t.Fatalf("session policy = %s / %s", cfg.SessionIdle, cfg.SessionAbsolute)
+	}
+	if cfg.StepUpTTL != 5*time.Minute {
+		t.Fatalf("StepUpTTL = %s", cfg.StepUpTTL)
 	}
 	if cfg.WebAuthnCeremonyTTL != 2*time.Minute {
 		t.Fatalf("WebAuthnCeremonyTTL = %s", cfg.WebAuthnCeremonyTTL)
@@ -146,6 +150,7 @@ func TestLoadFromEnvironment(t *testing.T) {
 	t.Setenv(envDatabaseURL, "postgres://app:secret@db:5432/app?sslmode=disable")
 	t.Setenv(envSessionIdle, "15m")
 	t.Setenv(envSessionAbsolute, "8h")
+	t.Setenv(envStepUpTTL, "5m")
 	t.Setenv(envWebAuthnCeremonyTTL, "90s")
 	t.Setenv(envValkeyURL, "redis://127.0.0.1:6379/0")
 	setAuthRateLimitEnv(t)
@@ -203,14 +208,38 @@ func TestLoadRequiresSessionPolicy(t *testing.T) {
 	t.Setenv(envWebAuthnCeremonyTTL, "2m")
 	t.Setenv(envSessionIdle, "")
 	t.Setenv(envSessionAbsolute, "24h")
+	t.Setenv(envStepUpTTL, "5m")
 	if _, err := Load(); err == nil {
 		t.Fatal("expected error for empty IDENTITY_SESSION_IDLE")
 	}
 
 	t.Setenv(envSessionIdle, "2h")
 	t.Setenv(envSessionAbsolute, "1h")
+	t.Setenv(envStepUpTTL, "5m")
 	if _, err := Load(); err == nil {
 		t.Fatal("expected error when absolute < idle")
+	}
+
+	t.Setenv(envSessionIdle, "1h")
+	t.Setenv(envSessionAbsolute, "24h")
+	t.Setenv(envStepUpTTL, "")
+	setAuthRateLimitEnv(t)
+	setVerificationSignupEnv(t)
+	setOutboxEnv(t)
+	setMaterialKeyEnv(t)
+	t.Setenv(envWebAuthnCeremonyTTL, "2m")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected error for empty IDENTITY_STEP_UP_TTL")
+	}
+	t.Setenv(envStepUpTTL, "30m")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected error when step-up TTL exceeds 15m")
+	}
+	t.Setenv(envSessionIdle, "2m")
+	t.Setenv(envSessionAbsolute, "24h")
+	t.Setenv(envStepUpTTL, "5m")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected error when step-up TTL exceeds idle")
 	}
 }
 
@@ -218,6 +247,7 @@ func TestLoadWebAuthnOriginsFromEnvironment(t *testing.T) {
 	t.Setenv(envDatabaseURL, "postgres://konumlu:konumlu@127.0.0.1:5432/konumlu?sslmode=disable")
 	t.Setenv(envSessionIdle, "1h")
 	t.Setenv(envSessionAbsolute, "24h")
+	t.Setenv(envStepUpTTL, "5m")
 	t.Setenv(envWebAuthnCeremonyTTL, "2m")
 	t.Setenv(envWebAuthnRPDisplayName, "KONUMLU local")
 	t.Setenv(envWebAuthnRPID, "localhost")
@@ -246,6 +276,7 @@ func TestLoadWebAuthnOptional(t *testing.T) {
 	t.Setenv(envDatabaseURL, "postgres://konumlu:konumlu@127.0.0.1:5432/konumlu?sslmode=disable")
 	t.Setenv(envSessionIdle, "1h")
 	t.Setenv(envSessionAbsolute, "24h")
+	t.Setenv(envStepUpTTL, "5m")
 	t.Setenv(envWebAuthnCeremonyTTL, "2m")
 	t.Setenv(envWebAuthnRPDisplayName, "")
 	t.Setenv(envWebAuthnRPID, "")
@@ -268,6 +299,7 @@ func TestLoadRequiresAuthRateLimit(t *testing.T) {
 	t.Setenv(envDatabaseURL, "postgres://konumlu:konumlu@127.0.0.1:5432/konumlu?sslmode=disable")
 	t.Setenv(envSessionIdle, "1h")
 	t.Setenv(envSessionAbsolute, "24h")
+	t.Setenv(envStepUpTTL, "5m")
 	t.Setenv(envWebAuthnCeremonyTTL, "2m")
 	t.Setenv(envAuthIPMaxAttempts, "")
 	t.Setenv(envAuthIPWindow, "15m")
@@ -293,6 +325,7 @@ func TestLoadRequiresOutboxPolicy(t *testing.T) {
 	t.Setenv(envDatabaseURL, "postgres://konumlu:konumlu@127.0.0.1:5432/konumlu?sslmode=disable")
 	t.Setenv(envSessionIdle, "1h")
 	t.Setenv(envSessionAbsolute, "24h")
+	t.Setenv(envStepUpTTL, "5m")
 	t.Setenv(envWebAuthnCeremonyTTL, "2m")
 	setAuthRateLimitEnv(t)
 	setVerificationSignupEnv(t)
@@ -328,6 +361,7 @@ func TestLoadNotificationChannelModes(t *testing.T) {
 	t.Setenv(envDatabaseURL, "postgres://konumlu:konumlu@127.0.0.1:5432/konumlu?sslmode=disable")
 	t.Setenv(envSessionIdle, "1h")
 	t.Setenv(envSessionAbsolute, "24h")
+	t.Setenv(envStepUpTTL, "5m")
 	t.Setenv(envWebAuthnCeremonyTTL, "2m")
 	setAuthRateLimitEnv(t)
 	setVerificationSignupEnv(t)
@@ -354,6 +388,7 @@ func TestLoadStaffIDPPartialFailsClosed(t *testing.T) {
 	t.Setenv(envDatabaseURL, "postgres://konumlu:konumlu@127.0.0.1:5432/konumlu?sslmode=disable")
 	t.Setenv(envSessionIdle, "1h")
 	t.Setenv(envSessionAbsolute, "24h")
+	t.Setenv(envStepUpTTL, "5m")
 	t.Setenv(envWebAuthnCeremonyTTL, "2m")
 	setAuthRateLimitEnv(t)
 	setVerificationSignupEnv(t)
@@ -371,6 +406,7 @@ func TestLoadStaffIDPComplete(t *testing.T) {
 	t.Setenv(envDatabaseURL, "postgres://konumlu:konumlu@127.0.0.1:5432/konumlu?sslmode=disable")
 	t.Setenv(envSessionIdle, "1h")
 	t.Setenv(envSessionAbsolute, "24h")
+	t.Setenv(envStepUpTTL, "5m")
 	t.Setenv(envWebAuthnCeremonyTTL, "2m")
 	setAuthRateLimitEnv(t)
 	setVerificationSignupEnv(t)
@@ -392,6 +428,7 @@ func TestLoadStaffDevIDPCompleteInDevelopment(t *testing.T) {
 	t.Setenv(envDatabaseURL, "postgres://konumlu:konumlu@127.0.0.1:5432/konumlu?sslmode=disable")
 	t.Setenv(envSessionIdle, "1h")
 	t.Setenv(envSessionAbsolute, "24h")
+	t.Setenv(envStepUpTTL, "5m")
 	t.Setenv(envWebAuthnCeremonyTTL, "2m")
 	setAuthRateLimitEnv(t)
 	setVerificationSignupEnv(t)
@@ -417,6 +454,7 @@ func TestLoadStaffDevIDPPartialFailsClosed(t *testing.T) {
 	t.Setenv(envDatabaseURL, "postgres://konumlu:konumlu@127.0.0.1:5432/konumlu?sslmode=disable")
 	t.Setenv(envSessionIdle, "1h")
 	t.Setenv(envSessionAbsolute, "24h")
+	t.Setenv(envStepUpTTL, "5m")
 	t.Setenv(envWebAuthnCeremonyTTL, "2m")
 	setAuthRateLimitEnv(t)
 	setVerificationSignupEnv(t)
@@ -446,6 +484,7 @@ func TestLoadStaffDevIDPCannotCombineWithStaffIDP(t *testing.T) {
 	t.Setenv(envDatabaseURL, "postgres://konumlu:konumlu@127.0.0.1:5432/konumlu?sslmode=disable")
 	t.Setenv(envSessionIdle, "1h")
 	t.Setenv(envSessionAbsolute, "24h")
+	t.Setenv(envStepUpTTL, "5m")
 	t.Setenv(envWebAuthnCeremonyTTL, "2m")
 	setAuthRateLimitEnv(t)
 	setVerificationSignupEnv(t)

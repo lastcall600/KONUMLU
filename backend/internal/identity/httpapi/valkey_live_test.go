@@ -124,7 +124,7 @@ func TestHTTPOverLiveValkeyThreshold(t *testing.T) {
 		RawToken:  "t",
 		Assertion: &protocol.CredentialAssertion{},
 	}}
-	h, err := New(auth, &fakeSessions{}, &fakeIdentifiers{}, &fakePasswords{}, &fakeSignup{}, &fakeAccounts{}, &fakeRegistration{}, &fakeReset{}, []string{allowedOrigin}, g)
+	h, err := New(auth, &fakeSessions{}, &fakeIdentifiers{}, &fakePasswords{}, &fakeSignup{}, &fakeAccounts{}, &fakeRegistration{}, &fakeReset{}, &fakeStepUp{}, &fakeCredentials{}, &fakeBootstrap{}, []string{allowedOrigin}, g)
 	if err != nil {
 		t.Fatal(err)
 	}

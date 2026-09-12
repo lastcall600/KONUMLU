@@ -436,6 +436,12 @@ func (m *memStore) UpdateSessionActivity(ctx context.Context, id ID, lastSeenAt,
 	if !ok {
 		return errNotFound
 	}
+	if s.RevokedAt != nil {
+		return errSessionRevoked
+	}
+	if !lastSeenAt.Before(s.IdleExpiresAt) || !lastSeenAt.Before(s.AbsoluteExpiresAt) {
+		return errUnauthenticated
+	}
 	s.LastSeenAt = lastSeenAt
 	s.IdleExpiresAt = idleExpiresAt
 	m.sessions[id] = s
@@ -478,6 +484,38 @@ func (m *memStore) RevokeSessionsForUser(ctx context.Context, userID ID, at time
 	u.UpdatedAt = at
 	m.users[userID] = u
 	return u.SessionEpoch, nil
+}
+
+func (m *memStore) ListSessionsForUser(ctx context.Context, userID ID) ([]Session, error) {
+	if err := m.check(); err != nil {
+		return nil, err
+	}
+	out := make([]Session, 0)
+	for _, s := range m.sessions {
+		if s.UserID == userID {
+			cp := s
+			cp.TokenHash = bytes.Clone(s.TokenHash)
+			out = append(out, cp)
+		}
+	}
+	return out, nil
+}
+
+func (m *memStore) RevokeOtherSessionsForUser(ctx context.Context, userID, keepSessionID ID, at time.Time) ([][]byte, error) {
+	if err := m.check(); err != nil {
+		return nil, err
+	}
+	hashes := make([][]byte, 0)
+	for id, s := range m.sessions {
+		if s.UserID != userID || s.ID == keepSessionID || s.RevokedAt != nil {
+			continue
+		}
+		revoked := at
+		s.RevokedAt = &revoked
+		m.sessions[id] = s
+		hashes = append(hashes, bytes.Clone(s.TokenHash))
+	}
+	return hashes, nil
 }
 
 func validLookingToken(t *testing.T) string {

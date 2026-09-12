@@ -45,10 +45,17 @@ Zero `StaffID` grants nothing, including admin.
 | POST `/v1/auth/passkey/login/begin` | ALLOW (origin) | ALLOW | ALLOW | N/A |
 | POST `/v1/auth/passkey/login/finish` | ALLOW → session | ALLOW | ALLOW | Fail closed (no session) |
 | POST `/v1/auth/password/login` | 401 generic if bad | ALLOW → session | ALLOW | 401 generic |
-| POST `/v1/auth/passkey/register/*` | 401 | ALLOW (self) | N/A (session-bound) | NEEDS_CONFIRMATION (session resolve) |
+| POST `/v1/auth/passkey/register/*` | 401 | ALLOW after recent-strong **or** first-passkey bootstrap | N/A (session-bound) | NEEDS_CONFIRMATION (session resolve) |
+| POST `/v1/auth/passkey/register/password-reauth` | 401 | ALLOW for zero-passkey + password (generic 401 if wrong); established passkey **403** | N/A | NEEDS_CONFIRMATION |
+| GET `/v1/auth/passkeys` | 401 | ALLOW (self metadata) | other user 404/empty via owner list | NEEDS_CONFIRMATION |
+| POST `/v1/auth/passkeys/{id}/remove` | 401 | ALLOW after recent-strong; last-factor 409 | other id **404** | NEEDS_CONFIRMATION |
+| POST `/v1/auth/step-up/passkey/*` | 401 | ALLOW (own passkey) | cannot start/finish another user | NEEDS_CONFIRMATION |
 | POST `/v1/auth/signup/*` | ALLOW (origin; existence-hiding) | N/A | N/A | N/A |
 | POST `/v1/auth/password/reset/*` | ALLOW (origin) | N/A | N/A | NEEDS_CONFIRMATION (generic vs distinct) |
 | GET `/v1/auth/session` | 401 | ALLOW | N/A | NEEDS_CONFIRMATION |
+| GET `/v1/auth/sessions` | 401 | ALLOW (own active) | cannot read other user | NEEDS_CONFIRMATION |
+| POST `/v1/auth/sessions/{id}/revoke` | 401 | ALLOW (own); current logs out | other user **404** | NEEDS_CONFIRMATION |
+| POST `/v1/auth/sessions/revoke-others` | 401 | ALLOW (keeps current) | N/A | NEEDS_CONFIRMATION |
 | POST `/v1/auth/logout` | 401 without session cookie; origin+CSRF required | ALLOW | N/A | NEEDS_CONFIRMATION |
 | GET `/v1/profile/me` | 401 | ALLOW (incl. restricted/removed profile) | N/A | Staff sees disabled; public 404 |
 | PATCH `/v1/profile/me` | 401 | ALLOW + CSRF | N/A | NEEDS_CONFIRMATION |
