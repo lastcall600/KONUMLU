@@ -19,7 +19,7 @@ Do not split domains into separate deployable services. The Go backend remains a
 
 `cmd/migrate` is an explicit operator CLI. Applications do not auto-run migrations on startup.
 
-Local compose (`docker-compose.yml`) is development-only (PostgreSQL/PostGIS + Valkey). It is not a production topology.
+Local compose (`docker-compose.yml`) is development-only (PostgreSQL/PostGIS + Valkey + MinIO). It is not a production topology.
 
 ## Runtime modes (`APP_ENV`)
 
@@ -56,7 +56,7 @@ External provider outage (EİDS, email/SMS, staff IdP, object storage) is not pr
 
 **Valkey:** non-durable. No persistence assumption. When unavailable: auth/rate-limit/issuance fail closed (`unavailable`); session hot cache still rehydrates from PostgreSQL; never reconstruct business truth from Valkey.
 
-**Object storage:** S3-compatible adapter. Originals are not public; public listing media uses processed keys only. Production requires explicit bucket/endpoint/region and either static keys or workload-identity config (adapter for workload is unwired until hosting). `OBJECT_STORAGE_PUBLIC_BASE_URL` is processed-media delivery only.
+**Object storage:** S3-compatible adapter. Originals are private quarantine (`media/listing-images/{owner}/{asset}/{random}`); public listing media uses processed keys only (`.../p/{random}`). Production requires explicit bucket/endpoint/region and either static keys or workload-identity config (adapter for workload is unwired until hosting). `OBJECT_STORAGE_PUBLIC_BASE_URL` is processed-media delivery only. CDN, when chosen, attaches in front of processed objects — see `docs/architecture/media-pipeline.md`. Upload presign TTL is capped at 15 minutes. Worker reclaims expired pending/rejected quarantine objects; it never deletes `ready` media by age.
 
 ## Worker / outbox
 

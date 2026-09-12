@@ -102,9 +102,10 @@ func (r *Relay) runLoop(ctx context.Context) error {
 			if canceled(err) {
 				return nil
 			}
-			r.logf("outbox claim failed class=%s", "claim_failed")
+			r.logf("outbox claim failed class=%s err=%s", "claim_failed", err.Error())
 		}
 		if n > 0 && err == nil {
+			r.logf("outbox claimed n=%d", n)
 			continue
 		}
 		if waitErr := r.wait(ctx, r.poll); waitErr != nil {

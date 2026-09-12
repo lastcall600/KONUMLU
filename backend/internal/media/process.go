@@ -7,9 +7,15 @@ import (
 	"image"
 	"image/jpeg"
 	"image/png"
+	"time"
+
+	"github.com/HugoSmits86/nativewebp"
+	xdraw "golang.org/x/image/draw"
+
+	"backend/internal/platform/observability"
 )
 
-const jpegReencodeQuality = 85
+const defaultOutputLongEdge = 1600
 
 type imageFormat int
 
@@ -36,12 +42,14 @@ func (s *Service) ProcessAsset(ctx context.Context, id ID) error {
 	if id.IsZero() {
 		return errZeroID
 	}
+	started := time.Now()
 	asset, err := s.store.Get(ctx, id)
 	if err != nil {
 		return mapStoreErr(err)
 	}
 	switch asset.Status {
 	case StatusReady, StatusRejected, StatusDeleted, StatusPendingUpload:
+		s.logProcess(ctx, id, asset.Status, "skip", 0, nil)
 		return nil
 	case StatusUploaded:
 		now := s.now().UTC()
@@ -60,37 +68,40 @@ func (s *Service) ProcessAsset(ctx context.Context, id ID) error {
 
 	data, stat, err := s.objects.GetObject(ctx, asset.ObjectKey)
 	if err != nil {
+		s.logProcess(ctx, id, asset.Status, "retry", time.Since(started), err)
 		return mapStoreErr(err)
 	}
 	if !stat.Exists {
-		return s.rejectAndComplete(ctx, asset)
+		return s.rejectAndComplete(ctx, asset, started)
 	}
 	maxBytes := s.processMaxBytes()
 	if int64(len(data)) > maxBytes || (stat.SizeBytes > 0 && stat.SizeBytes > maxBytes) {
-		return s.rejectAndComplete(ctx, asset)
+		return s.rejectAndComplete(ctx, asset, started)
 	}
 
 	format, err := inspectMagic(data)
 	if err != nil {
-		return s.rejectAndComplete(ctx, asset)
+		return s.rejectAndComplete(ctx, asset, started)
 	}
 
 	if err := s.requireMalware(ctx, asset.ObjectKey, data); err != nil {
 		if errors.Is(err, errInvalidImage) {
-			return s.rejectAndComplete(ctx, asset)
+			return s.rejectAndComplete(ctx, asset, started)
 		}
+		s.logProcess(ctx, id, asset.Status, "retry", time.Since(started), err)
 		return err
 	}
 
-	normalized, meta, err := normalizeImage(data, format, s.processMaxWidth(), s.processMaxHeight())
+	normalized, meta, err := normalizeImage(data, format, s.processOutputLongEdge())
 	if err != nil {
-		return s.rejectAndComplete(ctx, asset)
+		return s.rejectAndComplete(ctx, asset, started)
 	}
 
 	if err := s.requireModeration(ctx, asset.ObjectKey, normalized, meta.ContentType); err != nil {
 		if errors.Is(err, errInvalidImage) {
-			return s.rejectAndComplete(ctx, asset)
+			return s.rejectAndComplete(ctx, asset, started)
 		}
+		s.logProcess(ctx, id, asset.Status, "retry", time.Since(started), err)
 		return err
 	}
 
@@ -99,6 +110,7 @@ func (s *Service) ProcessAsset(ctx context.Context, id ID) error {
 		return err
 	}
 	if err := s.objects.PutObject(ctx, processedKey, normalized, meta.ContentType); err != nil {
+		s.logProcess(ctx, id, asset.Status, "retry", time.Since(started), err)
 		return mapStoreErr(err)
 	}
 
@@ -110,10 +122,12 @@ func (s *Service) ProcessAsset(ctx context.Context, id ID) error {
 	if err := s.store.Update(ctx, ready, asset.UpdatedAt); err != nil {
 		return mapStoreErr(err)
 	}
+	_ = s.objects.DeleteObject(ctx, asset.ObjectKey)
+	s.logProcess(ctx, id, StatusReady, "ready", time.Since(started), nil)
 	return nil
 }
 
-func (s *Service) rejectAndComplete(ctx context.Context, asset Asset) error {
+func (s *Service) rejectAndComplete(ctx context.Context, asset Asset, started time.Time) error {
 	now := s.now().UTC()
 	rejected, err := asset.Reject(now)
 	if err != nil {
@@ -125,6 +139,8 @@ func (s *Service) rejectAndComplete(ctx context.Context, asset Asset) error {
 	if err := s.store.Update(ctx, rejected, asset.UpdatedAt); err != nil {
 		return mapStoreErr(err)
 	}
+	_ = s.objects.DeleteObject(ctx, asset.ObjectKey)
+	s.logProcess(ctx, asset.ID, StatusRejected, "rejected", time.Since(started), errInvalidImage)
 	return nil
 }
 
@@ -194,6 +210,19 @@ func (s *Service) processMaxHeight() int {
 	return maxImageHeight
 }
 
+func (s *Service) processOutputLongEdge() int {
+	maxW := s.processMaxWidth()
+	maxH := s.processMaxHeight()
+	edge := defaultOutputLongEdge
+	if maxW > 0 && maxW < edge {
+		edge = maxW
+	}
+	if maxH > 0 && maxH < edge {
+		edge = maxH
+	}
+	return edge
+}
+
 func inspectMagic(data []byte) (imageFormat, error) {
 	if len(data) >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF {
 		return formatJPEG, nil
@@ -211,12 +240,12 @@ func isWebP(data []byte) bool {
 	return len(data) >= 12 && bytes.Equal(data[:4], webpRIFF) && bytes.Equal(data[8:12], webpWEBP)
 }
 
-func normalizeImage(data []byte, format imageFormat, maxW, maxH int) ([]byte, ValidatedMetadata, error) {
+func normalizeImage(data []byte, format imageFormat, outputLongEdge int) ([]byte, ValidatedMetadata, error) {
 	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
 		return nil, ValidatedMetadata{}, errInvalidImage
 	}
-	if err := validateDimensions(cfg.Width, cfg.Height, maxW, maxH); err != nil {
+	if err := validateDecodeBounds(cfg.Width, cfg.Height); err != nil {
 		return nil, ValidatedMetadata{}, err
 	}
 
@@ -227,32 +256,28 @@ func normalizeImage(data []byte, format imageFormat, maxW, maxH int) ([]byte, Va
 	bounds := img.Bounds()
 	width := bounds.Dx()
 	height := bounds.Dy()
-	if err := validateDimensions(width, height, maxW, maxH); err != nil {
+	if err := validateDecodeBounds(width, height); err != nil {
 		return nil, ValidatedMetadata{}, err
 	}
 
+	outW, outH := fitLongEdge(width, height, outputLongEdge)
+	if outW != width || outH != height {
+		scaled := image.NewRGBA(image.Rect(0, 0, outW, outH))
+		xdraw.CatmullRom.Scale(scaled, scaled.Bounds(), img, bounds, xdraw.Over, nil)
+		img = scaled
+		width, height = outW, outH
+	}
+
 	var out bytes.Buffer
-	contentType := ""
-	switch format {
-	case formatJPEG:
-		if err := jpeg.Encode(&out, img, &jpeg.Options{Quality: jpegReencodeQuality}); err != nil {
-			return nil, ValidatedMetadata{}, errInvalidImage
-		}
-		contentType = "image/jpeg"
-	case formatPNG:
-		if err := png.Encode(&out, img); err != nil {
-			return nil, ValidatedMetadata{}, errInvalidImage
-		}
-		contentType = "image/png"
-	default:
-		return nil, ValidatedMetadata{}, errUnsupportedImage
+	if err := nativewebp.Encode(&out, img, &nativewebp.Options{UseExtendedFormat: false}); err != nil {
+		return nil, ValidatedMetadata{}, errInvalidImage
 	}
 	encoded := out.Bytes()
-	if len(encoded) == 0 {
+	if !isWebP(encoded) || len(encoded) == 0 {
 		return nil, ValidatedMetadata{}, errInvalidImage
 	}
 	meta := ValidatedMetadata{
-		ContentType: contentType,
+		ContentType: "image/webp",
 		SizeBytes:   int64(len(encoded)),
 		Width:       width,
 		Height:      height,
@@ -274,18 +299,69 @@ func decodeImage(data []byte, format imageFormat) (image.Image, error) {
 	}
 }
 
-func validateDimensions(w, h, maxW, maxH int) error {
+func fitLongEdge(w, h, maxEdge int) (int, int) {
+	if w <= 0 || h <= 0 {
+		return w, h
+	}
+	if maxEdge <= 0 || (w <= maxEdge && h <= maxEdge) {
+		return w, h
+	}
+	if w >= h {
+		nw := maxEdge
+		nh := int(float64(h) * float64(maxEdge) / float64(w))
+		if nh < 1 {
+			nh = 1
+		}
+		return nw, nh
+	}
+	nh := maxEdge
+	nw := int(float64(w) * float64(maxEdge) / float64(h))
+	if nw < 1 {
+		nw = 1
+	}
+	return nw, nh
+}
+
+func validateDecodeBounds(w, h int) error {
 	if w <= 0 || h <= 0 {
 		return errInvalidImage
 	}
-	if maxW > 0 && w > maxW {
-		return errInvalidImage
-	}
-	if maxH > 0 && h > maxH {
+	if w > maxImageWidth || h > maxImageHeight {
 		return errInvalidImage
 	}
 	if int64(w)*int64(h) > maxImagePixels {
 		return errInvalidImage
 	}
 	return nil
+}
+
+func (s *Service) logProcess(ctx context.Context, id ID, status Status, outcome string, dur time.Duration, err error) {
+	attrs := []any{
+		"media_id", id.String(),
+		"media_status", string(status),
+		"processing_outcome", outcome,
+		"object_category", "listing-images",
+		"duration_ms", dur.Milliseconds(),
+	}
+	if err != nil {
+		attrs = append(attrs, "error_class", processErrorClass(err))
+		observability.FromContext(ctx).Info("media_process", attrs...)
+		return
+	}
+	observability.FromContext(ctx).Info("media_process", attrs...)
+}
+
+func processErrorClass(err error) string {
+	switch {
+	case err == nil:
+		return ""
+	case errors.Is(err, errInvalidImage), errors.Is(err, errUnsupportedImage):
+		return "invalid_media"
+	case errors.Is(err, errScannerUnavailable), errors.Is(err, errModeratorUnavailable):
+		return "scanner_unavailable"
+	case errors.Is(err, errUnavailable), errors.Is(err, errStorageRequired):
+		return "storage_unavailable"
+	default:
+		return "media_error"
+	}
 }

@@ -96,6 +96,14 @@ func TestLoadEnabledRejectsSecretInError(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsLongUploadTTL(t *testing.T) {
+	cfg := validCfg()
+	cfg.UploadTTL = 16 * time.Minute
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), envUploadTTL) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestValidateRejectsBucketTraversal(t *testing.T) {
 	cfg := validCfg()
 	cfg.Bucket = "../etc"

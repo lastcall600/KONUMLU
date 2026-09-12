@@ -11,9 +11,10 @@ import (
 
 var _ store = (*PostgresStore)(nil)
 
-const eventSelectCols = `id, event_type, event_version, aggregate_type, aggregate_id, payload,
-	idempotency_key, correlation_id, created_at, available_at, claimed_at, claim_until,
-	completed_at, attempts, last_error_class`
+// RETURNING must qualify columns: the CTE `picked` also exposes `id`.
+const eventReturningCols = `e.id, e.event_type, e.event_version, e.aggregate_type, e.aggregate_id, e.payload,
+	e.idempotency_key, e.correlation_id, e.created_at, e.available_at, e.claimed_at, e.claim_until,
+	e.completed_at, e.attempts, e.last_error_class`
 
 const claimSQL = `
 WITH picked AS (
@@ -32,7 +33,7 @@ SET claimed_at = $1,
     attempts = attempts + 1
 FROM picked
 WHERE e.id = picked.id
-RETURNING ` + eventSelectCols
+RETURNING ` + eventReturningCols
 
 // PostgresStore persists outbox events. Claim is a single statement so the
 // row lock is released before any external I/O.

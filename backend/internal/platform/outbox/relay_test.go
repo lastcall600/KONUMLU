@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -192,6 +193,33 @@ func TestRelayCancellationStopsLoop(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("canceled Run must return")
+	}
+}
+
+func TestClaimSQLReturningQualifiesUpdatedTable(t *testing.T) {
+	if !strings.Contains(claimSQL, "RETURNING e.id") {
+		t.Fatal("claim RETURNING must qualify e.id; unqualified id is ambiguous with CTE picked")
+	}
+	if strings.Contains(claimSQL, "RETURNING id,") {
+		t.Fatal("unqualified RETURNING id is a live claim failure even on an empty outbox")
+	}
+}
+
+func TestRelayEmptyClaimDoesNotLogFailure(t *testing.T) {
+	svc, _, _ := newTestOutbox(t)
+	relay := mustRelay(t, svc, NewRegistry())
+	var logged []string
+	relay.SetLogf(func(format string, args ...any) {
+		logged = append(logged, format)
+	})
+	n, err := relay.processBatch(context.Background())
+	if err != nil || n != 0 {
+		t.Fatalf("empty claim n=%d err=%v", n, err)
+	}
+	for _, line := range logged {
+		if strings.Contains(line, "claim_failed") {
+			t.Fatalf("empty poll must not log claim failure: %s", line)
+		}
 	}
 }
 

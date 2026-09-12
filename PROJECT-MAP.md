@@ -16,7 +16,7 @@
 | `PROJECT-MAP.md` | This file � repository layout guide |
 | `AGENTS.md` | AI agent operating norms and constraints (frozen baseline) |
 | `Makefile` | Local commands (`arch-check`) |
-| `docker-compose.yml` | Local PostgreSQL/PostGIS and Valkey services |
+| `docker-compose.yml` | Local PostgreSQL/PostGIS, Valkey, and MinIO |
 | `docker-compose.restore-drill.yml` | Isolated local restore-target PostgreSQL/PostGIS (separate volume/port; never the source DB) |
 | `docker-compose.pitr-lab.yml` | Isolated WAL/PITR capability lab (not the application database) |
 | `.env.example` | Environment variable names (no values) |
@@ -47,6 +47,7 @@ Detailed architecture diagrams, domain interaction sequence diagrams, data flow 
 | `outbox-design.md` | Transactional outbox schema and relay design detail |
 | `auth-flow.md` | Passkey and password authentication flow diagrams |
 | `production-runtime.md` | Production process topology, config/fail-closed rules, health, backup/restore pointers, promotion gates (no cloud vendor) |
+| `media-pipeline.md` | Listing-image upload, quarantine prefixes, WebP processing, worker/outbox, orphan cleanup, local MinIO, CDN attachment point |
 
 *(Files above except `production-runtime.md` are planned; create them as Phase 0A/V1 tasks progress.)*
 

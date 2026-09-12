@@ -145,14 +145,14 @@ func mapIdentityDeliveryErr(err error) error {
 
 var _ notifications.VerificationMaterialResolver = (*identityMaterialResolver)(nil)
 
-func newMediaProcessHandler(cfg config.Config, pool *db.Pool) (*media.ProcessHandler, error) {
+func newMediaProcessHandler(cfg config.Config, pool *db.Pool) (*media.ProcessHandler, *media.Service, error) {
 	objects, maxBytes, err := openMediaObjects()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	svc, err := media.NewService(media.NewPostgresStore(pool), objects, nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	svc.SetMaxUploadBytes(maxBytes)
 	svc.SetProcessingPolicy(media.ProcessingPolicy{
@@ -160,7 +160,11 @@ func newMediaProcessHandler(cfg config.Config, pool *db.Pool) (*media.ProcessHan
 		RequireModeration:  cfg.MediaImageModerationRequired,
 		MaxBytes:           maxBytes,
 	})
-	return media.NewProcessHandler(svc)
+	h, err := media.NewProcessHandler(svc)
+	if err != nil {
+		return nil, nil, err
+	}
+	return h, svc, nil
 }
 
 func openMediaObjects() (media.ObjectStorage, int64, error) {

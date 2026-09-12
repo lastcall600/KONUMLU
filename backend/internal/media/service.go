@@ -218,6 +218,12 @@ func (s *Service) ConfirmUpload(ctx context.Context, id, ownerUserID ID) (Asset,
 	if err != nil {
 		return Asset{}, mapStoreErr(err)
 	}
+	if current.Status == StatusUploaded || current.Status == StatusProcessing {
+		return current, nil
+	}
+	if current.Status != StatusPendingUpload {
+		return Asset{}, errInvalidTransition
+	}
 	if !stat.Exists {
 		return Asset{}, errObjectMissing
 	}

@@ -24,6 +24,9 @@ func TestPostgresStoreRequiresPool(t *testing.T) {
 	if _, err := p.ListByListing(context.Background(), mustID(t)); !errors.Is(err, errUnavailable) {
 		t.Fatalf("list err = %v", err)
 	}
+	if _, err := p.ListReclaimable(context.Background(), time.Now(), time.Hour, time.Hour, 10); !errors.Is(err, errUnavailable) {
+		t.Fatalf("reclaim err = %v", err)
+	}
 }
 
 func TestMapDBErr(t *testing.T) {

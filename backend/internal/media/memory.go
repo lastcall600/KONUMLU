@@ -177,6 +177,49 @@ func (m *MemoryStore) ListByListing(ctx context.Context, listingID ID) ([]Asset,
 	return out, nil
 }
 
+func (m *MemoryStore) ListReclaimable(ctx context.Context, now time.Time, pendingAge, rejectedAge time.Duration, limit int) ([]Asset, error) {
+	if m == nil {
+		return nil, errStoreRequired
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.fail != nil {
+		return nil, m.fail
+	}
+	out := make([]Asset, 0)
+	for _, asset := range m.byID {
+		if asset.Status == StatusReady {
+			continue
+		}
+		switch asset.Status {
+		case StatusPendingUpload:
+			if pendingAge > 0 && now.Sub(asset.CreatedAt) >= pendingAge {
+				out = append(out, cloneAsset(asset))
+			}
+		case StatusRejected:
+			if asset.RejectedAt != nil && rejectedAge > 0 && now.Sub(*asset.RejectedAt) >= rejectedAge {
+				out = append(out, cloneAsset(asset))
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].UpdatedAt.Equal(out[j].UpdatedAt) {
+			return out[i].UpdatedAt.Before(out[j].UpdatedAt)
+		}
+		return out[i].ID.String() < out[j].ID.String()
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
 var _ assetStore = (*MemoryStore)(nil)
 
 // MemoryObjectStorage is an in-process object port for tests. It is not a provider adapter.
