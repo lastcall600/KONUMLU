@@ -3,7 +3,7 @@
 # Usage: docker build -f backend/Dockerfile --build-arg COMMAND=server backend
 #        docker build -f backend/Dockerfile --build-arg COMMAND=worker backend
 
-FROM golang:1.24-bookworm AS build
+FROM golang:1.26.8-bookworm AS build
 WORKDIR /src
 ARG COMMAND=server
 COPY go.mod go.sum ./
