@@ -13,7 +13,7 @@ require (
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/redis/go-redis/v9 v9.14.0
 	golang.org/x/crypto v0.56.0
-	golang.org/x/image v0.31.0
+	golang.org/x/image v0.45.0
 )
 
 require (
