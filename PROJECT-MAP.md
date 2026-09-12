@@ -17,6 +17,8 @@
 | `AGENTS.md` | AI agent operating norms and constraints (frozen baseline) |
 | `Makefile` | Local commands (`arch-check`) |
 | `docker-compose.yml` | Local PostgreSQL/PostGIS and Valkey services |
+| `docker-compose.restore-drill.yml` | Isolated local restore-target PostgreSQL/PostGIS (separate volume/port; never the source DB) |
+| `docker-compose.pitr-lab.yml` | Isolated WAL/PITR capability lab (not the application database) |
 | `.env.example` | Environment variable names (no values) |
 
 ---
@@ -44,9 +46,15 @@ Detailed architecture diagrams, domain interaction sequence diagrams, data flow 
 | `slice-b.md` | Slice B end-to-end flow detail (need — messaging) |
 | `outbox-design.md` | Transactional outbox schema and relay design detail |
 | `auth-flow.md` | Passkey and password authentication flow diagrams |
-| `production-runtime.md` | Production process topology, config/fail-closed rules, health, backup/restore, promotion gates (no cloud vendor) |
+| `production-runtime.md` | Production process topology, config/fail-closed rules, health, backup/restore pointers, promotion gates (no cloud vendor) |
 
 *(Files above except `production-runtime.md` are planned; create them as Phase 0A/V1 tasks progress.)*
+
+### `/docs/operations/` — Operator runbooks
+
+| File | Purpose |
+|---|---|
+| `BACKUP-RESTORE.md` | PostgreSQL backup model, local restore drill, PITR production requirements (no cloud vendor in app code) |
 
 ### `/docs/security/` — Production security baseline
 
@@ -130,6 +138,7 @@ Aggregates product vision, domain tier structure, vertical slices, phases, archi
 | `/backend/internal/infrastructure/` | Provider adapter implementations (storage, notifications, maps, payments, EİDS) | `notifications` email/SMS adapters (no vendor SDK; `disabled`/`external` modes); `storage` S3-compatible adapter (AWS SDK v2; signed PUT/GET; optional public base URL; custom endpoint/path-style; no production vendor/CDN); `eids` unconfigured gateway (unavailable, never verified; no official SDK) |
 | `/web/apps/consumer/` | Public consumer Next.js app (konumlu.com) | Initialized (Phase 0B-32 scaffold + 0B-34 `/giris` + 0B-35 `/kayit` + 0B-36 `/sifre-sifirla` + 0B-45 `/ilan-ver` owner draft create + 0B-49 Master Data category/form + 0B-55 `/ara` public search/list + 0B-56 `/ilan/[listingId]` public detail + 0B-57 `/ara` MapLibre map/list sync + 0B-59 `/ilan-ver` owner publish + 0B-60 `/favoriler` listing favorites + 0B-61 `/kayitli-aramalar` saved searches + 0B-62 `/mesajlar` listing messaging + 0B-64 `/randevular` Konumlu Verified appointments + 0B-66 `/guven-pasaportum` session Trust passport + 0B-68 `/degerlendirme/[verifiedInteractionId]` + `/degerlendirmelerim` verified reviews + 0B-68A `/randevular` review entry from appointment `verifiedInteractionId` + 0B-70 listing accuracy + self provider-service review summaries + 0B-71 public verified review bodies on listing detail + 0B-73 `/guven-pasaportum` verified-review signals from `GET /v1/trust/me` only + 0B-75 `/profil/[publicProfileId]` public Identity + public Güven Pasaportu + 0B-76 `/ilan/[listingId]` Satıcı link to `/profil/{publicProfileId}`; listing EİDS HTTP exists on owner API, consumer publish UI is unchanged) |
 | `/web/apps/admin/` | Management Center Next.js app (admin.konumlu.com; ADR-013) | Initialized (Phase 0B-33: App Router scaffold, shell + dashboard placeholder; no Staff IAM) |
+| `/scripts/` | Operator scripts | `scripts/ops/backup-restore/` — local PostgreSQL dump/restore verification SQL (not application runtime) |
 
 ## Planned Application Directories (not yet initialized)
 
@@ -140,7 +149,6 @@ These directories are planned for V1. Architecture gates G-01 through G-09 are r
 | `/mobile/` | React Native mobile application |
 | `/shared/` | Shared TypeScript types and utilities between web and mobile |
 | `/infra/` | Infrastructure-as-code (Terraform, Pulumi — TBD) |
-| `/scripts/` | Developer tooling scripts (seed data, local setup) |
 
 ---
 

@@ -32,3 +32,6 @@ security-reports/
 sbom/
 govulncheck.jsonl
 govulncheck-db.jsonl
+
+# Local PostgreSQL backup / restore drill artifacts (sensitive; never commit)
+var/backups/

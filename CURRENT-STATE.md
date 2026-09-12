@@ -149,6 +149,7 @@
 - [x] 0B-105 — EİDS production integration foundation (`internal/eids`; listing property vs vehicle verification lifecycle; Master Data category `eids_requirement` none/property/vehicle; Listings publish eligibility via contract; owner HTTP start/get; unconfigured provider is unavailable not verified; no official adapter, no person identity, no admin bypass)
 - [x] 0B-106 — Production runtime / infrastructure foundation (process topology without cloud vendor/K8s/Kafka; `APP_ENV` modes; production fail-closed config; liveness vs readiness; pool/outbox/worker runtime config; trusted proxies; structured logs + request id; Dockerfiles; backup/restore expectations documented)
 - [x] 0B-108 — Need status gate on Transaction lifecycle (create/start require Need `open`; complete allows `open`/`fulfilled` and rejects cancelled/expired/draft; Deliveries provider progression refuses cancelled Transaction; fulfillment remains outbox/worker)
+- [x] Production hardening sprint 2 (local) — PostgreSQL logical backup → isolated restore drill + operator runbook (`docs/operations/BACKUP-RESTORE.md`). Production WAL/PITR hosting still a documented gap.
 
 ---
 
