@@ -6,7 +6,7 @@ Scanner jobs, failure policy, and supply-chain notes for the production security
 
 | Job | What runs | CI failure |
 |---|---|---|
-| `dependency-security` | Official `govulncheck` v1.1.4 on `backend/` (reachable vulns). `npm audit --package-lock-only` on consumer and admin lockfiles | **Go:** any *new third-party* reachable finding (vulnerable module is not `stdlib`) not listed in `.github/security/govulncheck-known.txt`. Stdlib findings are logged and do not fail (toolchain upgrade is out of this baseline). Known 0C-07 third-party findings require authorized upgrades (not auto-patched). **npm:** `high` or `critical` (`--audit-level=high`). `moderate`/`low` are reported, not failed |
+| `dependency-security` | Official `govulncheck` v1.1.4 on `backend/` (reachable vulns). `npm audit --package-lock-only` on consumer and admin lockfiles | **Go:** any *new third-party* reachable finding (vulnerable module is not `stdlib`) not listed in `.github/security/govulncheck-known.txt`. Stdlib findings are logged and do not fail. Toolchain is Go 1.26.8 (0C-07A). Known 0C-07 third-party findings require authorized upgrades (not auto-patched). **npm:** `high` or `critical` (`--audit-level=high`). `moderate`/`low` are reported, not failed |
 | `secret-scan` | Official Gitleaks CLI (`v8.30.1`), git history (`fetch-depth: 0`), `--redact` | Any finding. Ephemeral probe (not committed) must detect; repository scan must be clean |
 | `authorization-security` | Targeted Go authorization / Staff IAM / fail-closed tests | Any test failure |
 | `container-security` | Builds the same server/worker images as `backend-container`, scans with official Trivy CLI (`v0.74.0`) | **New CRITICAL** with an available fix (`--severity CRITICAL --ignore-unfixed --exit-code 1`). CVEs in `.trivyignore` are deferred 0C-07 findings (pgx, same as GO-2026-5004). HIGH/MEDIUM/LOW and unfixed issues are reported as artifacts, not failed |
@@ -45,11 +45,11 @@ Scanners executed. Dependency upgrades were **not** applied in this task.
 | CVE-2026-33815 | CRITICAL (Trivy) | `github.com/jackc/pgx/v5@v5.7.6` memory-safety | Yes (gobinary in server/worker images) | `5.9.0+` | Same pgx upgrade; listed in `.trivyignore` |
 | CVE-2026-33816 | CRITICAL (Trivy) | `github.com/jackc/pgx/v5@v5.7.6` memory-safety | Yes (gobinary in server/worker images) | `5.9.0+` | Same pgx upgrade; listed in `.trivyignore` |
 
-These two third-party IDs are listed in `.github/security/govulncheck-known.txt`. Stdlib IDs reported by govulncheck on Go 1.24 are informational (toolchain follow-up). New third-party IDs / new fixed CRITICAL image CVEs fail CI.
+These two third-party IDs are listed in `.github/security/govulncheck-known.txt`. 0C-07A moved the backend toolchain to Go 1.26.8 (supported patched line; first 1.26 release that includes all previously reported stdlib HIGH fixes is 1.26.6). New third-party IDs / new fixed CRITICAL image CVEs fail CI.
 
 npm audit (consumer + admin lockfiles): 0 vulnerabilities at high/critical.
 
-Container Alpine 3.21 OS layer: 0 CRITICAL/HIGH (fixed). Gobinary HIGH (stdlib / `golang.org/x/net` toolchain, ~30 findings) is reported as artifacts and does **not** fail this baseline; remediation is a Go toolchain upgrade follow-up, not an auto-bump.
+Container Alpine 3.21 OS layer: 0 CRITICAL/HIGH (fixed). Gobinary HIGH remaining after 0C-07A are third-party (`golang.org/x/crypto`, `golang.org/x/text`); those require a separate authorized module upgrade, not a toolchain bump.
 
 Container HIGH/MEDIUM/LOW (including unfixed) are reported as artifacts; they do not fail this baseline.
 
@@ -62,7 +62,7 @@ Pinned in this baseline:
 
 Follow-up (not done here — would change runtime images or action major versions):
 
-- Pin `golang:1.24-bookworm` and `alpine:3.21` in `backend/Dockerfile` to digests.
+- Pin `golang:1.26.8-bookworm` and `alpine:3.21` in `backend/Dockerfile` to digests.
 - Evaluate moving existing jobs from Actions v4/v5 SHAs to current v7 majors (behavioral change).
 - GitHub Advanced Security / Dependabot alerts (org setting, not workflow).
 - Official Staff IdP adapter still unwired; production staff routes remain unregistered until a real adapter is authorized.
