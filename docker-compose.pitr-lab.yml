@@ -1,0 +1,44 @@
+# Isolated WAL / PITR capability lab on the same PostGIS image as local/dev.
+# This is NOT the KONUMLU application database and does not change docker-compose.yml.
+#
+#   docker compose -f docker-compose.pitr-lab.yml up -d
+#   docker compose -f docker-compose.pitr-lab.yml down -v
+
+services:
+  postgres-pitr-lab:
+    image: postgis/postgis:16-3.5
+    container_name: konumlu-postgres-pitr-lab
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-konumlu}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-konumlu}
+      POSTGRES_DB: pitr_lab
+    ports:
+      - "${POSTGRES_PITR_LAB_PORT:-55433}:5432"
+    volumes:
+      - konumlu_postgres_pitr_lab_data:/var/lib/postgresql/data
+      - konumlu_postgres_pitr_lab_wal:/var/lib/postgresql/archive
+    entrypoint:
+      - /bin/bash
+      - -c
+      - mkdir -p /var/lib/postgresql/archive && chown postgres:postgres /var/lib/postgresql/archive && exec docker-entrypoint.sh "$$@"
+      - --
+    command:
+      - postgres
+      - -c
+      - wal_level=replica
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_timeout=5
+      - -c
+      - archive_command=test ! -f /var/lib/postgresql/archive/%f && cp %p /var/lib/postgresql/archive/%f
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d pitr_lab"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  konumlu_postgres_pitr_lab_data:
+  konumlu_postgres_pitr_lab_wal:

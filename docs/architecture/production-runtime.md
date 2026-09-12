@@ -77,8 +77,10 @@ PostgreSQL transactional outbox + `cmd/worker` poller. No Kafka or other broker.
 
 ## Backup / restore (encode, do not implement cloud backups)
 
+Operator runbook: `docs/operations/BACKUP-RESTORE.md`. Logical backup restore is proven locally; production PITR (WAL archive + base backup) remains a hosting implementation step.
+
 - PostgreSQL: automated backups plus point-in-time recovery. Retention is a hosting decision.
-- Object storage: provider durability plus versioning for media buckets. Retention is a hosting decision.
+- Object storage: provider durability plus versioning for media buckets. Retention is a hosting decision. PostgreSQL backup does **not** include S3/MinIO objects.
 - Valkey is not a backup source and must not be restored as truth.
 - Restore procedure (DB PITR + object restore + migrate version check + smoke `/healthz`/`/readyz`) must be tested before production launch.
 

@@ -1,0 +1,28 @@
+# Isolated restore TARGET for local backup drills.
+# Never start this instead of docker-compose.yml.
+# Never restore over the source volume konumlu_postgres_data.
+#
+#   docker compose -f docker-compose.restore-drill.yml up -d
+#   docker compose -f docker-compose.restore-drill.yml down -v
+
+services:
+  postgres-restore-target:
+    image: postgis/postgis:16-3.5
+    container_name: konumlu-postgres-restore-target
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-konumlu}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-konumlu}
+      POSTGRES_DB: ${POSTGRES_DB:-konumlu}
+    ports:
+      - "${POSTGRES_RESTORE_PORT:-55432}:5432"
+    volumes:
+      - konumlu_postgres_restore_drill:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  konumlu_postgres_restore_drill:
