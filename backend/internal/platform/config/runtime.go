@@ -145,6 +145,9 @@ func applyRuntimeGates(cfg *Config) error {
 	if cfg == nil {
 		return fmt.Errorf("config is required")
 	}
+	if err := gateHumanChallenge(cfg); err != nil {
+		return err
+	}
 	if cfg.AllowInsecureCookies && cfg.ProductionLike() {
 		return fmt.Errorf("%s is a development-only setting", envAllowInsecureCookies)
 	}
@@ -172,6 +175,27 @@ func applyRuntimeGates(cfg *Config) error {
 	}
 	if raw, set := os.LookupEnv(envOutboxWorkerConcurrency); !set || strings.TrimSpace(raw) == "" {
 		return fmt.Errorf("%s must be set in %s", envOutboxWorkerConcurrency, cfg.Environment)
+	}
+	return nil
+}
+
+func gateHumanChallenge(cfg *Config) error {
+	if cfg == nil {
+		return fmt.Errorf("config is required")
+	}
+	provider := strings.ToLower(strings.TrimSpace(cfg.HumanChallenge.Provider))
+	if provider == "" {
+		provider = "none"
+	}
+	required := len(cfg.HumanChallenge.Operations) > 0
+	if cfg.ProductionLike() && provider == "fake" {
+		return fmt.Errorf("%s=fake is a development-only setting", envHumanChallengeProvider)
+	}
+	if required && provider == "none" {
+		return fmt.Errorf("%s cannot be none when %s is set", envHumanChallengeProvider, envHumanChallengeOperations)
+	}
+	if required && cfg.HumanChallenge.ReplayTTL <= 0 {
+		return fmt.Errorf("%s must be greater than zero when challenge operations are set", envHumanChallengeReplayTTL)
 	}
 	return nil
 }

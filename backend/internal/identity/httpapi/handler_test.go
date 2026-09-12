@@ -932,6 +932,9 @@ func TestPasswordUserLimitRejectsAboveThreshold(t *testing.T) {
 	if h.passwords.verifyCalls != 1 {
 		t.Fatal("user limit must run before password verification")
 	}
+	if h.identifiers.calls != 1 {
+		t.Fatal("identifier target must 429 before a second resolve")
+	}
 	if h.sessions.creates != 0 {
 		t.Fatal("user limit must not create a session")
 	}
@@ -944,14 +947,26 @@ func TestUnknownIdentifierDoesNotCreatePIIKey(t *testing.T) {
 	phone := "+905551112233"
 	_ = doPasswordLogin(t, h, "email", email, "any-password")
 	_ = doPasswordLogin(t, h, "phone", phone, "any-password")
+	wantEmail := identity.FormatRateLimitKey(identity.AuthOpPasswordLogin, identity.DimensionTarget, identity.PasswordLoginTarget(identity.IdentifierEmail, email))
+	wantPhone := identity.FormatRateLimitKey(identity.AuthOpPasswordLogin, identity.DimensionTarget, identity.PasswordLoginTarget(identity.IdentifierPhone, phone))
+	foundEmail, foundPhone := false, false
 	for _, key := range h.counter.keys {
 		if strings.Contains(key, email) || strings.Contains(strings.ToLower(key), "pii-user") ||
 			strings.Contains(key, phone) || strings.Contains(key, "905551112233") {
 			t.Fatalf("PII in limiter key %q", key)
 		}
-		if strings.Contains(key, authPasswordUserKeyPrefix) {
+		if strings.Contains(key, ":account:") {
 			t.Fatalf("unknown identifier must not create user bucket key %q", key)
 		}
+		if key == wantEmail {
+			foundEmail = true
+		}
+		if key == wantPhone {
+			foundPhone = true
+		}
+	}
+	if !foundEmail || !foundPhone {
+		t.Fatalf("missing hashed identifier targets email=%v phone=%v keys=%v", foundEmail, foundPhone, h.counter.keys)
 	}
 	if h.passwords.dummyCalls != 2 {
 		t.Fatalf("dummyCalls = %d, want 2", h.passwords.dummyCalls)
@@ -967,21 +982,72 @@ func TestKnownUserLimitKeyUsesUUIDOnly(t *testing.T) {
 	rec := doPasswordLogin(t, h, "email", email, "wrong")
 	assertGenericAuthFailure(t, rec, h)
 
-	want := authPasswordUserKeyPrefix + userID.String()
-	found := false
+	wantAccount := identity.FormatRateLimitKey(identity.AuthOpPasswordLogin, identity.DimensionAccount, userID.String())
+	wantTarget := identity.FormatRateLimitKey(identity.AuthOpPasswordLogin, identity.DimensionTarget, identity.PasswordLoginTarget(identity.IdentifierEmail, email))
+	foundAccount, foundTarget := false, false
 	for _, key := range h.counter.keys {
 		if strings.Contains(key, email) {
 			t.Fatalf("email in limiter key %q", key)
 		}
-		if key == want {
-			found = true
+		if key == wantAccount {
+			foundAccount = true
 		}
-		if strings.HasPrefix(key, authPasswordUserKeyPrefix) && key != want {
+		if key == wantTarget {
+			foundTarget = true
+		}
+		if strings.Contains(key, ":account:") && key != wantAccount {
 			t.Fatalf("unexpected user key %q", key)
 		}
+		if strings.Contains(key, userID.String()) {
+			t.Fatalf("raw user UUID in limiter key %q", key)
+		}
 	}
-	if !found {
-		t.Fatalf("missing user UUID key %q in %v", want, h.counter.keys)
+	if !foundAccount {
+		t.Fatalf("missing hashed account key %q in %v", wantAccount, h.counter.keys)
+	}
+	if !foundTarget {
+		t.Fatalf("missing hashed identifier target %q in %v", wantTarget, h.counter.keys)
+	}
+}
+
+func TestPasswordLoginAccountLimitStillAppliesAcrossIdentifiers(t *testing.T) {
+	h := newTestHandlerWithLimit(t, AuthRateLimit{
+		IPMaxAttempts: 20, IPWindow: time.Minute,
+		PasswordUserMaxAttempts: 1, PasswordUserWindow: time.Minute,
+	})
+	userID := mustID(t)
+	h.identifiers.user = identity.User{ID: userID}
+	h.passwords.verifyErr = identity.ErrUnauthenticated
+	rec := doPasswordLogin(t, h, "email", "owner@example.com", "wrong")
+	assertGenericAuthFailure(t, rec, h)
+	rec = doPasswordLogin(t, h, "phone", "+905551112233", "wrong")
+	assertGenericRateLimited(t, rec)
+	if h.identifiers.calls != 2 {
+		t.Fatalf("cross-identifier stuffing must resolve the second identifier, calls=%d", h.identifiers.calls)
+	}
+	if h.passwords.verifyCalls != 1 {
+		t.Fatalf("account limit must still stop the second credential check, verifyCalls=%d", h.passwords.verifyCalls)
+	}
+}
+
+func TestPasskeyFinishFailureDoesNotCreateAccountBucket(t *testing.T) {
+	h := newTestHandlerWithLimit(t, AuthRateLimit{
+		IPMaxAttempts: 20, IPWindow: time.Minute,
+		PasswordUserMaxAttempts: 1, PasswordUserWindow: time.Minute,
+	})
+	h.auth.finishErr = identity.ErrUnauthenticated
+	rec := do(t, h, http.MethodPost, "/v1/auth/passkey/login/finish", allowedOrigin, map[string]any{
+		"ceremonyToken": "c-token",
+		"credential":    map[string]any{"type": "public-key"},
+	}, nil)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	assertErrorCode(t, rec, "unauthenticated")
+	for _, key := range h.counter.keys {
+		if strings.Contains(key, ":account:") {
+			t.Fatalf("failed discoverable assertion must not open an account bucket: %q", key)
+		}
 	}
 }
 
@@ -1032,7 +1098,7 @@ func TestRateLimitedResponseIsGeneric(t *testing.T) {
 	rec := do(t, h, http.MethodPost, "/v1/auth/passkey/login/begin", allowedOrigin, nil, nil)
 	assertGenericRateLimited(t, rec)
 	body := rec.Body.String()
-	if strings.Contains(body, "192.0.2.1") || strings.Contains(body, authIPKeyPrefix) {
+	if strings.Contains(body, "192.0.2.1") || strings.Contains(body, "identity:auth:rl:") {
 		t.Fatal("429 must not include IP or limiter keys")
 	}
 }

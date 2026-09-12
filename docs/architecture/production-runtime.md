@@ -54,7 +54,7 @@ External provider outage (EİDS, email/SMS, staff IdP, object storage) is not pr
 
 **PostgreSQL/PostGIS:** source of truth. Pool bounds are optional env (`DB_MAX_*`). Migrations: `go run ./cmd/migrate up` (or `down 1` / `version`) only. No destructive auto-migrate on boot.
 
-**Valkey:** non-durable. No persistence assumption. When unavailable: auth/rate-limit/issuance fail closed (`unavailable`); session hot cache still rehydrates from PostgreSQL; never reconstruct business truth from Valkey.
+**Valkey:** non-durable. No persistence assumption. When unavailable: auth abuse / issuance rate limits fail closed (`unavailable`); human challenge, when required, fails closed; session hot cache still rehydrates from PostgreSQL; never reconstruct business truth from Valkey. See `docs/architecture/auth-abuse.md`.
 
 **Object storage:** S3-compatible adapter. Originals are private quarantine (`media/listing-images/{owner}/{asset}/{random}`); public listing media uses processed keys only (`.../p/{random}`). Production requires explicit bucket/endpoint/region and either static keys or workload-identity config (adapter for workload is unwired until hosting). `OBJECT_STORAGE_PUBLIC_BASE_URL` is processed-media delivery only. CDN, when chosen, attaches in front of processed objects — see `docs/architecture/media-pipeline.md`. Upload presign TTL is capped at 15 minutes. Worker reclaims expired pending/rejected quarantine objects; it never deletes `ready` media by age.
 

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/go-webauthn/webauthn/protocol"
@@ -134,6 +135,14 @@ func (h *Handler) beginPasskeyRegister(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if !h.protect(w, r, identity.AbuseSubject{
+		Operation:      identity.AuthOpPasskeyRegisterBegin,
+		AccountID:      session.UserID,
+		SessionID:      session.ID,
+		ChallengeToken: req.ChallengeToken,
+	}, identity.PhaseAll) {
+		return
+	}
 	name, display := registrationLabels(session.UserID, req.Name, req.DisplayName)
 	out, err := h.register.BeginRegistration(r.Context(), identity.BeginRegistrationInput{
 		UserID:      session.UserID,
@@ -166,6 +175,14 @@ func (h *Handler) finishPasskeyRegister(w http.ResponseWriter, r *http.Request) 
 	}
 	if strings.TrimSpace(req.CeremonyToken) == "" || len(req.Credential) == 0 {
 		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	if !h.protect(w, r, identity.AbuseSubject{
+		Operation:      identity.AuthOpPasskeyRegisterFinish,
+		AccountID:      session.UserID,
+		SessionID:      session.ID,
+		ChallengeToken: req.ChallengeToken,
+	}, identity.PhaseAll) {
 		return
 	}
 	if _, err := h.register.FinishRegistration(r.Context(), identity.FinishRegistrationInput{
@@ -217,7 +234,17 @@ func (h *Handler) beginPasskeyLogin(w http.ResponseWriter, r *http.Request) {
 	if !h.requireOrigin(w, r) {
 		return
 	}
-	if !h.allowAuthIP(w, r) {
+	var req challengeTokenRequest
+	if r.Body != nil && r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request")
+			return
+		}
+	}
+	if !h.protect(w, r, identity.AbuseSubject{
+		Operation:      identity.AuthOpPasskeyLoginBegin,
+		ChallengeToken: req.ChallengeToken,
+	}, identity.PhaseIP|identity.PhaseChallenge) {
 		return
 	}
 	out, err := h.auth.BeginAuthentication(r.Context())
@@ -239,9 +266,6 @@ func (h *Handler) finishPasskeyLogin(w http.ResponseWriter, r *http.Request) {
 	if !h.requireOrigin(w, r) {
 		return
 	}
-	if !h.allowAuthIP(w, r) {
-		return
-	}
 	var req finishRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request")
@@ -249,6 +273,12 @@ func (h *Handler) finishPasskeyLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.TrimSpace(req.CeremonyToken) == "" || len(req.Credential) == 0 {
 		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	if !h.protect(w, r, identity.AbuseSubject{
+		Operation:      identity.AuthOpPasskeyLoginFinish,
+		ChallengeToken: req.ChallengeToken,
+	}, identity.PhaseIP|identity.PhaseChallenge) {
 		return
 	}
 
@@ -260,14 +290,17 @@ func (h *Handler) finishPasskeyLogin(w http.ResponseWriter, r *http.Request) {
 		writeIdentityError(w, err)
 		return
 	}
+	if !h.protect(w, r, identity.AbuseSubject{
+		Operation: identity.AuthOpPasskeyLoginFinish,
+		AccountID: userID,
+	}, identity.PhaseAccount) {
+		return
+	}
 	h.issueBrowserSession(w, r, userID)
 }
 
 func (h *Handler) passwordLogin(w http.ResponseWriter, r *http.Request) {
 	if !h.requireOrigin(w, r) {
-		return
-	}
-	if !h.allowAuthIP(w, r) {
 		return
 	}
 	var req passwordLoginRequest
@@ -284,8 +317,16 @@ func (h *Handler) passwordLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_request")
 		return
 	}
-	if _, err := identity.CanonicalizeIdentifier(kind, req.Identifier); err != nil {
+	canonical, err := identity.CanonicalizeIdentifier(kind, req.Identifier)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	if !h.protect(w, r, identity.AbuseSubject{
+		Operation:      identity.AuthOpPasswordLogin,
+		Target:         identity.PasswordLoginTarget(kind, canonical),
+		ChallengeToken: req.ChallengeToken,
+	}, identity.PhaseIP|identity.PhaseTarget|identity.PhaseChallenge) {
 		return
 	}
 
@@ -304,7 +345,10 @@ func (h *Handler) passwordLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !h.allowPasswordUser(w, r, user.ID) {
+	if !h.protect(w, r, identity.AbuseSubject{
+		Operation: identity.AuthOpPasswordLogin,
+		AccountID: user.ID,
+	}, identity.PhaseAccount) {
 		return
 	}
 
@@ -345,6 +389,12 @@ func (h *Handler) startSignupVerification(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "bad_request")
 		return
 	}
+	if !h.protect(w, r, identity.AbuseSubject{
+		Operation:      identity.AuthOpSignupStart,
+		ChallengeToken: req.ChallengeToken,
+	}, identity.PhaseIP|identity.PhaseChallenge) {
+		return
+	}
 	got, err := h.signup.StartSignupVerification(r.Context(), identity.StartSignupVerificationInput{
 		Kind:        kind,
 		Destination: req.Identifier,
@@ -366,9 +416,6 @@ func (h *Handler) finishSignupVerification(w http.ResponseWriter, r *http.Reques
 	if !h.requireOrigin(w, r) {
 		return
 	}
-	if !h.allowSignupVerifyIP(w, r) {
-		return
-	}
 	var req signupFinishRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request")
@@ -381,6 +428,13 @@ func (h *Handler) finishSignupVerification(w http.ResponseWriter, r *http.Reques
 	}
 	if strings.TrimSpace(req.Code) == "" {
 		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	if !h.protect(w, r, identity.AbuseSubject{
+		Operation:      identity.AuthOpSignupFinish,
+		Target:         challengeID.String(),
+		ChallengeToken: req.ChallengeToken,
+	}, identity.PhaseIP|identity.PhaseTarget|identity.PhaseChallenge) {
 		return
 	}
 	got, err := h.signup.FinishSignupVerification(r.Context(), identity.FinishSignupVerificationInput{
@@ -412,6 +466,13 @@ func (h *Handler) completeSignup(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.TrimSpace(req.SignupProof) == "" {
 		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	if !h.protect(w, r, identity.AbuseSubject{
+		Operation:      identity.AuthOpSignupComplete,
+		Proof:          req.SignupProof,
+		ChallengeToken: req.ChallengeToken,
+	}, identity.PhaseIP|identity.PhaseProof|identity.PhaseChallenge) {
 		return
 	}
 	var password []byte
@@ -464,6 +525,12 @@ func (h *Handler) startPasswordReset(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_request")
 		return
 	}
+	if !h.protect(w, r, identity.AbuseSubject{
+		Operation:      identity.AuthOpResetStart,
+		ChallengeToken: req.ChallengeToken,
+	}, identity.PhaseIP|identity.PhaseChallenge) {
+		return
+	}
 	got, err := h.reset.StartPasswordReset(r.Context(), identity.StartPasswordResetInput{
 		Kind:        kind,
 		Destination: req.Identifier,
@@ -499,6 +566,13 @@ func (h *Handler) verifyPasswordReset(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_request")
 		return
 	}
+	if !h.protect(w, r, identity.AbuseSubject{
+		Operation:      identity.AuthOpResetVerify,
+		Target:         challengeID.String(),
+		ChallengeToken: req.ChallengeToken,
+	}, identity.PhaseIP|identity.PhaseTarget|identity.PhaseChallenge) {
+		return
+	}
 	got, err := h.reset.VerifyPasswordReset(r.Context(), identity.VerifyPasswordResetInput{
 		ChallengeID: challengeID,
 		Code:        req.Code,
@@ -529,6 +603,13 @@ func (h *Handler) completePasswordReset(w http.ResponseWriter, r *http.Request) 
 	}
 	if len(req.NewPassword) > identity.MaxPasswordBytes {
 		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	if !h.protect(w, r, identity.AbuseSubject{
+		Operation:      identity.AuthOpResetComplete,
+		Proof:          req.ResetProof,
+		ChallengeToken: req.ChallengeToken,
+	}, identity.PhaseIP|identity.PhaseProof|identity.PhaseChallenge) {
 		return
 	}
 	password := []byte(req.NewPassword)
@@ -628,28 +709,40 @@ func (h *Handler) requireOrigin(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
-func (h *Handler) allowAuthIP(w http.ResponseWriter, r *http.Request) bool {
-	if err := h.guard.allowIP(r.Context(), r); err != nil {
-		writeLimitError(w, err)
+func (h *Handler) protect(w http.ResponseWriter, r *http.Request, sub identity.AbuseSubject, phase identity.AbusePhase) bool {
+	if h.guard == nil {
+		writeError(w, http.StatusServiceUnavailable, "unavailable")
 		return false
 	}
-	return true
+	sub.IP = h.guard.clientIP(r)
+	sub.Hostname = requestHostname(r)
+	out := h.guard.evaluate(r.Context(), sub, phase)
+	logAuthRisk(r.Context(), out)
+	return writeRisk(w, out)
 }
 
-func (h *Handler) allowPasswordUser(w http.ResponseWriter, r *http.Request, userID identity.ID) bool {
-	if err := h.guard.allowPasswordUser(r.Context(), userID); err != nil {
-		writeLimitError(w, err)
+func writeRisk(w http.ResponseWriter, out identity.RiskOutcome) bool {
+	if out.Allow() {
+		return true
+	}
+	switch out.Reason {
+	case identity.ReasonVelocityIP, identity.ReasonVelocityAccount, identity.ReasonVelocityTarget:
+		if out.RetryAfter > 0 {
+			sec := int(out.RetryAfter.Seconds())
+			if sec < 1 {
+				sec = 1
+			}
+			w.Header().Set("Retry-After", strconv.Itoa(sec))
+		}
+		writeError(w, http.StatusTooManyRequests, "rate_limited")
+		return false
+	case identity.ReasonStorageUnavailable, identity.ReasonProviderUnavailable:
+		writeError(w, http.StatusServiceUnavailable, "unavailable")
+		return false
+	default:
+		writeError(w, http.StatusForbidden, "forbidden")
 		return false
 	}
-	return true
-}
-
-func (h *Handler) allowSignupVerifyIP(w http.ResponseWriter, r *http.Request) bool {
-	if err := h.guard.allowSignupVerifyIP(r.Context(), r); err != nil {
-		writeLimitError(w, err)
-		return false
-	}
-	return true
 }
 
 func (h *Handler) originAllowed(r *http.Request) bool {
@@ -662,8 +755,9 @@ func (h *Handler) originAllowed(r *http.Request) bool {
 }
 
 type registerBeginRequest struct {
-	Name        string `json:"name"`
-	DisplayName string `json:"displayName"`
+	Name           string `json:"name"`
+	DisplayName    string `json:"displayName"`
+	ChallengeToken string `json:"challengeToken"`
 }
 
 type registerBeginResponse struct {
@@ -681,20 +775,27 @@ type beginResponse struct {
 }
 
 type finishRequest struct {
-	CeremonyToken string          `json:"ceremonyToken"`
-	Credential    json.RawMessage `json:"credential"`
+	CeremonyToken  string          `json:"ceremonyToken"`
+	Credential     json.RawMessage `json:"credential"`
+	ChallengeToken string          `json:"challengeToken"`
+}
+
+type challengeTokenRequest struct {
+	ChallengeToken string `json:"challengeToken"`
 }
 
 type passwordLoginRequest struct {
-	Kind       string `json:"kind"`
-	Identifier string `json:"identifier"`
-	Password   string `json:"password"`
+	Kind           string `json:"kind"`
+	Identifier     string `json:"identifier"`
+	Password       string `json:"password"`
+	ChallengeToken string `json:"challengeToken"`
 }
 
 type signupStartRequest struct {
-	Kind       string `json:"kind"`
-	Identifier string `json:"identifier"`
-	Locale     string `json:"locale"`
+	Kind           string `json:"kind"`
+	Identifier     string `json:"identifier"`
+	Locale         string `json:"locale"`
+	ChallengeToken string `json:"challengeToken"`
 }
 
 type signupStartResponse struct {
@@ -702,8 +803,9 @@ type signupStartResponse struct {
 }
 
 type signupFinishRequest struct {
-	ChallengeID string `json:"challengeId"`
-	Code        string `json:"code"`
+	ChallengeID    string `json:"challengeId"`
+	Code           string `json:"code"`
+	ChallengeToken string `json:"challengeToken"`
 }
 
 type signupFinishResponse struct {
@@ -712,8 +814,9 @@ type signupFinishResponse struct {
 }
 
 type signupCompleteRequest struct {
-	SignupProof string `json:"signupProof"`
-	Password    string `json:"password"`
+	SignupProof    string `json:"signupProof"`
+	Password       string `json:"password"`
+	ChallengeToken string `json:"challengeToken"`
 }
 
 type resetVerifyResponse struct {
@@ -721,8 +824,9 @@ type resetVerifyResponse struct {
 }
 
 type resetCompleteRequest struct {
-	ResetProof  string `json:"resetProof"`
-	NewPassword string `json:"newPassword"`
+	ResetProof     string `json:"resetProof"`
+	NewPassword    string `json:"newPassword"`
+	ChallengeToken string `json:"challengeToken"`
 }
 
 type resetCompleteResponse struct {
@@ -829,14 +933,6 @@ func clearBytes(b []byte) {
 	for i := range b {
 		b[i] = 0
 	}
-}
-
-func writeLimitError(w http.ResponseWriter, err error) {
-	if errors.Is(err, errRateLimited) {
-		writeError(w, http.StatusTooManyRequests, "rate_limited")
-		return
-	}
-	writeError(w, http.StatusServiceUnavailable, "unavailable")
 }
 
 func writeError(w http.ResponseWriter, status int, code string) {

@@ -22,6 +22,8 @@ func (c Config) LogValue() slog.Value {
 		slog.Int("trusted_proxies", len(c.TrustedProxies)),
 		slog.Bool("staff_idp_configured", c.StaffIDP.Complete()),
 		slog.Bool("staff_dev_idp_enabled", c.StaffDevIDP.Enabled),
+		slog.String("human_challenge_provider", c.HumanChallenge.Provider),
+		slog.Int("human_challenge_operations", len(c.HumanChallenge.Operations)),
 	)
 }
 

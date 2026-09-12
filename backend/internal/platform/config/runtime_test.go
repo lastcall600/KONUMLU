@@ -228,3 +228,47 @@ func TestStaffIDPAbsenceIsNotAProductionConfigError(t *testing.T) {
 		t.Fatalf("staff dev idp = %+v", cfg.StaffDevIDP)
 	}
 }
+
+func TestHumanChallengeConfigGates(t *testing.T) {
+	setBaseLoadEnv(t)
+	t.Setenv(envHumanChallengeOperations, "password_login")
+	t.Setenv(envHumanChallengeProvider, "none")
+	if _, err := Load(); err == nil {
+		t.Fatal("required operations with none must fail")
+	}
+
+	setBaseLoadEnv(t)
+	t.Setenv(envHumanChallengeOperations, "password_login")
+	t.Setenv(envHumanChallengeProvider, "fake")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("dev fake: %v", err)
+	}
+	if cfg.HumanChallenge.Provider != "fake" || cfg.HumanChallenge.ReplayTTL <= 0 {
+		t.Fatalf("dev fake cfg = %+v", cfg.HumanChallenge)
+	}
+
+	setProductionRequiredEnv(t)
+	t.Setenv(envHumanChallengeProvider, "fake")
+	if _, err := Load(); err == nil {
+		t.Fatal("production fake must fail")
+	}
+
+	setProductionRequiredEnv(t)
+	t.Setenv(envAppEnv, "staging")
+	t.Setenv(envHumanChallengeProvider, "fake")
+	if _, err := Load(); err == nil {
+		t.Fatal("staging fake must fail")
+	}
+
+	setProductionRequiredEnv(t)
+	t.Setenv(envHumanChallengeOperations, "password_login")
+	t.Setenv(envHumanChallengeProvider, "unconfigured")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("production unconfigured: %v", err)
+	}
+	if cfg.HumanChallenge.Provider != "unconfigured" {
+		t.Fatalf("provider = %q", cfg.HumanChallenge.Provider)
+	}
+}

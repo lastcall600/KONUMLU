@@ -2,23 +2,17 @@ package httpapi
 
 import (
 	"context"
-	"errors"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
 	"backend/internal/identity"
+	"backend/internal/platform/observability"
 )
 
-var errRateLimited = errors.New("rate limited")
-
-const (
-	authIPKeyPrefix           = "identity:auth:rl:ip:"
-	authPasswordUserKeyPrefix = "identity:auth:rl:password-user:"
-	signupVerifyIPKeyPrefix   = "identity:auth:rl:signup-verify-ip:"
-	unknownClientIP           = "unknown"
-)
+const unknownClientIP = "unknown"
 
 // incrementer is the Valkey atomic counter used for disposable rate-limit windows.
 type incrementer interface {
@@ -36,27 +30,56 @@ type AuthRateLimit struct {
 	IPWindow                time.Duration
 	PasswordUserMaxAttempts int
 	PasswordUserWindow      time.Duration
+	TargetMaxAttempts       int
+	TargetWindow            time.Duration
+	CompleteMaxAttempts     int
+	CompleteWindow          time.Duration
+	SensitiveMaxAttempts    int
+	SensitiveWindow         time.Duration
+	Challenge               identity.HumanChallengePolicy
+	Verifier                identity.HumanChallenge
 }
 
-// AbuseGuard applies Identity HTTP auth rate limits. Counters are disposable.
+func (p AuthRateLimit) policy() (identity.AuthAbusePolicy, error) {
+	ip := identity.RateLimitBucket{Max: p.IPMaxAttempts, Window: p.IPWindow}
+	account := identity.RateLimitBucket{Max: p.PasswordUserMaxAttempts, Window: p.PasswordUserWindow}
+	target := account
+	if p.TargetMaxAttempts > 0 {
+		target = identity.RateLimitBucket{Max: p.TargetMaxAttempts, Window: p.TargetWindow}
+	}
+	complete := ip
+	if p.CompleteMaxAttempts > 0 {
+		complete = identity.RateLimitBucket{Max: p.CompleteMaxAttempts, Window: p.CompleteWindow}
+	}
+	sensitive := account
+	if p.SensitiveMaxAttempts > 0 {
+		sensitive = identity.RateLimitBucket{Max: p.SensitiveMaxAttempts, Window: p.SensitiveWindow}
+	}
+	return identity.BuildAuthAbusePolicy(ip, account, target, complete, sensitive)
+}
+
+// AbuseGuard applies Identity HTTP auth rate limits and challenge policy.
 type AbuseGuard struct {
-	inc incrementer
-	ip  ClientIPFunc
-	p   AuthRateLimit
+	engine *identity.AbuseEngine
+	ip     ClientIPFunc
 }
 
 func NewAbuseGuard(inc incrementer, policy AuthRateLimit, ip ClientIPFunc) (*AbuseGuard, error) {
 	if inc == nil {
 		return nil, identity.ErrUnavailable
 	}
-	if policy.IPMaxAttempts <= 0 || policy.IPWindow <= 0 ||
-		policy.PasswordUserMaxAttempts <= 0 || policy.PasswordUserWindow <= 0 {
-		return nil, identity.ErrUnavailable
+	abusePolicy, err := policy.policy()
+	if err != nil {
+		return nil, err
+	}
+	engine, err := identity.NewAbuseEngine(inc, abusePolicy, policy.Challenge, policy.Verifier)
+	if err != nil {
+		return nil, err
 	}
 	if ip == nil {
 		ip = ClientIPFromRemoteAddr
 	}
-	return &AbuseGuard{inc: inc, ip: ip, p: policy}, nil
+	return &AbuseGuard{engine: engine, ip: ip}, nil
 }
 
 // ClientIPFromRemoteAddr uses net/http RemoteAddr only.
@@ -75,30 +98,6 @@ func ClientIPFromRemoteAddr(r *http.Request) string {
 	return addr
 }
 
-func (g *AbuseGuard) allowIP(ctx context.Context, r *http.Request) error {
-	if g == nil {
-		return identity.ErrUnavailable
-	}
-	return g.check(ctx, authIPKeyPrefix+g.ip(r), g.p.IPMaxAttempts, g.p.IPWindow)
-}
-
-func (g *AbuseGuard) allowPasswordUser(ctx context.Context, userID identity.ID) error {
-	if g == nil {
-		return identity.ErrUnavailable
-	}
-	if userID.IsZero() {
-		return identity.ErrUnavailable
-	}
-	return g.check(ctx, authPasswordUserKeyPrefix+userID.String(), g.p.PasswordUserMaxAttempts, g.p.PasswordUserWindow)
-}
-
-func (g *AbuseGuard) allowSignupVerifyIP(ctx context.Context, r *http.Request) error {
-	if g == nil {
-		return identity.ErrUnavailable
-	}
-	return g.check(ctx, signupVerifyIPKeyPrefix+g.clientIP(r), g.p.IPMaxAttempts, g.p.IPWindow)
-}
-
 func (g *AbuseGuard) clientIP(r *http.Request) string {
 	if g == nil || g.ip == nil {
 		return ClientIPFromRemoteAddr(r)
@@ -106,13 +105,54 @@ func (g *AbuseGuard) clientIP(r *http.Request) string {
 	return g.ip(r)
 }
 
-func (g *AbuseGuard) check(ctx context.Context, key string, max int, window time.Duration) error {
-	n, err := g.inc.Increment(ctx, key, window)
-	if err != nil {
-		return identity.ErrUnavailable
+func (g *AbuseGuard) evaluate(ctx context.Context, sub identity.AbuseSubject, phase identity.AbusePhase) identity.RiskOutcome {
+	if g == nil || g.engine == nil {
+		return identity.RiskOutcome{Decision: identity.RiskRestrict, Reason: identity.ReasonStorageUnavailable, Operation: sub.Operation}
 	}
-	if n > int64(max) {
-		return errRateLimited
+	return g.engine.Evaluate(ctx, sub, phase)
+}
+
+func requestHostname(r *http.Request) string {
+	if r == nil {
+		return ""
 	}
-	return nil
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin != "" && origin != "null" {
+		if u, err := url.Parse(origin); err == nil {
+			if host := strings.TrimSpace(u.Hostname()); host != "" {
+				return host
+			}
+		}
+	}
+	return strings.TrimSpace(r.Host)
+}
+
+func logAuthRisk(ctx context.Context, out identity.RiskOutcome) {
+	if out.Allow() && !out.Challenged {
+		return
+	}
+	observability.FromContext(ctx).Info("auth_abuse",
+		"auth_operation", string(out.Operation),
+		"risk_decision", string(out.Decision),
+		"reason_code", string(out.Reason),
+		"rate_limit_dimension", string(out.Dimension),
+		"challenged", out.Challenged,
+		"challenge_provider", out.Provider,
+		"challenge_ok", out.ChallengeOK,
+		"error_class", riskErrorClass(out),
+	)
+}
+
+func riskErrorClass(out identity.RiskOutcome) string {
+	if out.Allow() {
+		return ""
+	}
+	switch out.Reason {
+	case identity.ReasonVelocityIP, identity.ReasonVelocityAccount, identity.ReasonVelocityTarget:
+		return "rate_limited"
+	case identity.ReasonStorageUnavailable, identity.ReasonProviderUnavailable:
+		return "unavailable"
+	default:
+		return "forbidden"
+	}
 }

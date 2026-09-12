@@ -110,6 +110,10 @@ func TestStructuredLoggerRedactsSensitiveKeysWithoutDroppingIDs(t *testing.T) {
 		"cookie", "__Host-konumlu_session="+synthSession,
 		"x-csrf-token", synthCSRF,
 		"otp", synthOTP,
+		"signupProof", "raw-signup-proof-zzzz",
+		"resetProof", "raw-reset-proof-yyyy",
+		"challengeToken", "raw-challenge-token-xxxx",
+		"provider_secret", synthProvider,
 		"qr_token", synthQR,
 		"phone", synthPhone,
 		"email", synthEmail,
@@ -131,6 +135,9 @@ func TestStructuredLoggerRedactsSensitiveKeysWithoutDroppingIDs(t *testing.T) {
 	}
 	if row["authorization"] != Redacted || row["otp"] != Redacted || row["email"] != Redacted {
 		t.Fatalf("expected redacted keys: %#v", row)
+	}
+	if row["signupProof"] != Redacted || row["resetProof"] != Redacted || row["challengeToken"] != Redacted || row["provider_secret"] != Redacted {
+		t.Fatalf("auth secrets not redacted: %#v", row)
 	}
 	if row["upload_url"] != Redacted {
 		t.Fatalf("upload_url = %#v", row["upload_url"])
@@ -202,6 +209,7 @@ func assertNoLeak(t *testing.T, out string) {
 	leaks := []string{
 		synthBearer, synthSession, synthCSRF, synthOTP, synthQR,
 		synthPhone, synthEmail, synthProvider, synthTCKN,
+		"raw-signup-proof-zzzz", "raw-reset-proof-yyyy", "raw-challenge-token-xxxx",
 		"Bearer " + synthBearer,
 	}
 	for _, leak := range leaks {

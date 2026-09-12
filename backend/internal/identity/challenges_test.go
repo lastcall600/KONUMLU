@@ -288,15 +288,19 @@ func TestDestinationLimiterUsesHashNotRawPII(t *testing.T) {
 		t.Fatal("destination limiter key must not contain raw email")
 	}
 
+	wantIP := issuanceIPKeyPrefix + string(ChallengeSignup) + ":" + HashRateLimitSubject("198.51.100.9")
 	foundDest, foundIP := false, false
 	for _, key := range inc.keys {
 		if strings.Contains(key, "Alice") || strings.Contains(key, "alice@example.com") || strings.Contains(key, "Example.COM") {
 			t.Fatalf("raw email in limiter key %q", key)
 		}
+		if strings.Contains(key, "198.51.100.9") {
+			t.Fatalf("raw IP in limiter key %q", key)
+		}
 		if key == wantDest {
 			foundDest = true
 		}
-		if strings.HasPrefix(key, issuanceIPKeyPrefix) && strings.Contains(key, "198.51.100.9") {
+		if key == wantIP {
 			foundIP = true
 		}
 	}
