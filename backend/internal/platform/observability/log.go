@@ -10,8 +10,8 @@ import (
 	"backend/internal/platform/config"
 )
 
-// ConfigureJSON installs a process-wide JSON slog handler. Secret values must
-// never be passed as log attributes by callers.
+// ConfigureJSON installs the process-wide JSON slog handler with the central
+// redaction policy. No collector is required.
 func ConfigureJSON(cfg config.Config, w io.Writer) *slog.Logger {
 	if w == nil {
 		w = os.Stdout
@@ -25,7 +25,10 @@ func ConfigureJSON(cfg config.Config, w io.Writer) *slog.Logger {
 	case "error":
 		level = slog.LevelError
 	}
-	h := slog.NewJSONHandler(w, &slog.HandlerOptions{Level: level})
+	h := slog.NewJSONHandler(w, &slog.HandlerOptions{
+		Level:       level,
+		ReplaceAttr: replaceAttr,
+	})
 	logger := slog.New(h).With("env", string(cfg.Environment))
 	slog.SetDefault(logger)
 	return logger
