@@ -36,6 +36,20 @@ func (c Config) ProductionLike() bool {
 	return c.Environment == EnvStaging || c.Environment == EnvProduction
 }
 
+// AuthProviderLaunchBlockers lists AUTH production vendors that are not wired.
+// These do not crash the process; they are explicit launch blockers.
+func (c Config) AuthProviderLaunchBlockers() []string {
+	var out []string
+	out = append(out, "human_challenge_vendor")
+	if c.NotificationsEmailMode != NotificationChannelExternal {
+		out = append(out, "email_vendor")
+	}
+	if c.NotificationsSMSMode != NotificationChannelExternal {
+		out = append(out, "sms_vendor")
+	}
+	return out
+}
+
 func parseEnvironment(raw string) (Environment, error) {
 	raw = strings.ToLower(strings.TrimSpace(raw))
 	if raw == "" {

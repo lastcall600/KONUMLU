@@ -81,6 +81,9 @@ func run() error {
 		return fmt.Errorf("config: %w", err)
 	}
 	observability.ConfigureJSON(cfg, nil)
+	if blockers := cfg.AuthProviderLaunchBlockers(); len(blockers) > 0 {
+		slog.Info("auth_provider_launch_blocked", "blockers", blockers)
+	}
 
 	objCfg, err := objstorage.Load()
 	if err != nil {
@@ -1318,7 +1321,19 @@ func newIdentityHTTP(pool *db.Pool, cfg config.Config, cacheClient *cache.Client
 	if err != nil {
 		return nil, err
 	}
-	return httpapi.New(auth, sessions, identifiers, passwords, signup, accounts, registration, reset, stepUp, guardCreds, bootstrap, cfg.WebAuthnRPOrigins, guard)
+	h, err := httpapi.New(auth, sessions, identifiers, passwords, signup, accounts, registration, reset, stepUp, guardCreds, bootstrap, cfg.WebAuthnRPOrigins, guard)
+	if err != nil {
+		return nil, err
+	}
+	sec, err := identity.NewOutboxSecurityRecorder(ob, nil)
+	if err != nil {
+		return nil, err
+	}
+	sessions.BindDurableSecurity(sec)
+	registration.BindDurableSecurity(store, sec)
+	guardCreds.BindDurableSecurity(store, sec)
+	h.SetSecurityRecorder(sec)
+	return h, nil
 }
 
 func newPublicProfileHTTP(pool *db.Pool, cfg config.Config, sessions *identity.Sessions) (*publicprofile.Handler, error) {

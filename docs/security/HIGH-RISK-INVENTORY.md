@@ -19,7 +19,7 @@ Authorization outcomes live in [AUTHORIZATION-MATRIX.md](./AUTHORIZATION-MATRIX.
 | POST | `/v1/auth/passkeys/{passkeyId}/remove` | CSRF, origin, step-up, last-factor | Owner only; success logout-all |
 | POST | `/v1/auth/passkey/login/begin` | Public auth, origin, rate limit | Discoverable login |
 | POST | `/v1/auth/passkey/login/finish` | Session issuance, origin, rate limit | Fresh session; passkey login may Grant step-up |
-| POST | `/v1/auth/password/login` | Session issuance, origin, rate limit | Generic 401; no step-up Grant |
+| POST | `/v1/auth/password/login` | Session issuance, origin, rate limit | Generic 401; AUTH-C `auth.login.*` events (unknown accounts omit user id) |
 | POST | `/v1/auth/step-up/passkey/begin` | Session, CSRF, origin, rate limit | Existing user passkey assertion |
 | POST | `/v1/auth/step-up/passkey/finish` | Session, CSRF, origin, rate limit | Rotates session; Valkey elevation |
 | POST | `/v1/auth/signup/verification/start` | Public, origin, rate limit | Existence-hiding |
@@ -32,7 +32,7 @@ Authorization outcomes live in [AUTHORIZATION-MATRIX.md](./AUTHORIZATION-MATRIX.
 | GET | `/v1/auth/sessions` | Session list | Own active sessions; no token/hash |
 | POST | `/v1/auth/sessions/{sessionId}/revoke` | Session destroy, CSRF, origin | Owner only; current clears cookies |
 | POST | `/v1/auth/sessions/revoke-others` | Session destroy, CSRF, origin | Keeps current; no epoch bump |
-| POST | `/v1/auth/logout` | Session destroy, CSRF, origin | |
+| POST | `/v1/auth/logout` | Session destroy, CSRF, origin | AUTH-C security event `auth.logout` |
 | GET | `/v1/profile/me` | Identity self-read | Session |
 | PATCH | `/v1/profile/me` | Identity self-write, CSRF | Restricted/removed still self-readable |
 | GET | `/v1/public/profiles/{publicProfileId}` | Public identity | Restricted/removed → privacy 404 |

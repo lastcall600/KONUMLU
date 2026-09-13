@@ -26,13 +26,25 @@ type HumanChallengeResult struct {
 
 // HumanChallenge is the Identity port for human-challenge verification.
 // Domain code must not import vendor SDKs or vendor response structs.
+//
+// Production adapter contract (vendor is NOT selected in AUTH-C):
+//   - token is verified server-side; frontend tokens are never trusted alone
+//   - expected action (AuthOperation) is bound
+//   - expected hostname/site is bound when the provider supports it
+//   - timeout, invalid token, malformed response, wrong action, and wrong
+//     hostname must not return OK
+//   - replay is provider single-use and/or Identity hashed-token replay
+//   - secrets and tokens are never logged
+//   - provider errors map to unavailable / not-OK; required challenge is fail-closed
+//
+// HumanChallenge is not identity verification and not Step-Up.
 type HumanChallenge interface {
 	Name() string
 	Verify(ctx context.Context, in HumanChallengeInput) (HumanChallengeResult, error)
 }
 
-// NewHumanChallengeVerifier returns the AUTH-A verifier for a named mode.
-// Production vendor adapters are not selected in this package.
+// NewHumanChallengeVerifier returns the AUTH-A/C verifier for a named mode.
+// No production vendor (Turnstile or otherwise) is selected here.
 func NewHumanChallengeVerifier(provider string) (HumanChallenge, error) {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "", HumanChallengeProviderNone:

@@ -228,6 +228,15 @@ func (r *PasswordReset) CompletePasswordReset(ctx context.Context, in CompletePa
 		return CompletePasswordResetResult{}, mapResetErr(err)
 	}
 
+	if err := enqueueAuthSecurity(ctx, r.intents, tx, SecurityRecord{
+		Type:      AuthEventPasswordResetCompleted,
+		UserID:    proof.UserID,
+		Operation: AuthOpResetComplete,
+		Result:    AuthResultSuccess,
+	}, now); err != nil {
+		return CompletePasswordResetResult{}, mapResetErr(err)
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return CompletePasswordResetResult{}, mapResetErr(err)
 	}

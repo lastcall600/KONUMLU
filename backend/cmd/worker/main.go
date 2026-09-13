@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"backend/internal/identity"
 	listingcontracts "backend/internal/listings/contracts"
 	locationcontracts "backend/internal/location/contracts"
 	"backend/internal/media"
@@ -65,6 +66,9 @@ func run() error {
 	// Email/SMS vendors are not selected. Missing senders fail retryably;
 	// the worker must never complete an intent as a successful no-op send.
 	slog.Info("outbox worker started")
+	if blockers := cfg.AuthProviderLaunchBlockers(); len(blockers) > 0 {
+		slog.Info("auth_provider_launch_blocked", "blockers", blockers)
+	}
 	if err := relay.RunWorkers(ctx, cfg.OutboxWorkerConcurrency); err != nil {
 		return fmt.Errorf("outbox: %w", err)
 	}
@@ -183,6 +187,9 @@ func newHandlerRegistry(store notifications.DeliveryPersister, delivery *notific
 		return nil, err
 	}
 	if err := reg.Register(txncontracts.EventTypeCompleted, txncontracts.EventVersion, completionHandler); err != nil {
+		return nil, err
+	}
+	if err := reg.Register(identity.AuthSecurityEventType, identity.AuthSecurityEventVersion, identity.NewAuthSecurityHandler()); err != nil {
 		return nil, err
 	}
 	return reg, nil

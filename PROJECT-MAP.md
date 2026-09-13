@@ -47,8 +47,8 @@ Detailed architecture diagrams, domain interaction sequence diagrams, data flow 
 | `outbox-design.md` | Transactional outbox schema and relay design detail |
 | `auth-flow.md` | Passkey and password authentication flow diagrams |
 | `production-runtime.md` | Production process topology, config/fail-closed rules, health, backup/restore pointers, promotion gates (no cloud vendor) |
-| `auth-abuse.md` | AUTH-A Identity abuse primitives: multi-dimensional Valkey rate limits, RiskDecision, HumanChallenge port (no production vendor) |
-| `auth-session.md` | AUTH-B session lifecycle, idle Touch, security-center HTTP, passkey management, Step-Up, first-passkey bootstrap (Valkey, fail-closed) |
+| `auth-abuse.md` | AUTH-A Identity abuse primitives: multi-dimensional Valkey rate limits, RiskDecision, HumanChallenge port (no production vendor). AUTH-C security events + provider launch blockers. |
+| `auth-session.md` | AUTH-B session lifecycle, idle Touch, security-center HTTP, passkey management, Step-Up, first-passkey bootstrap (Valkey, fail-closed). AUTH-C outbox security events. |
 | `media-pipeline.md` | Listing-image upload, quarantine prefixes, WebP processing, worker/outbox, orphan cleanup, local MinIO, CDN attachment point |
 
 *(Files above except `production-runtime.md` are planned; create them as Phase 0A/V1 tasks progress.)*
@@ -58,6 +58,7 @@ Detailed architecture diagrams, domain interaction sequence diagrams, data flow 
 | File | Purpose |
 |---|---|
 | `BACKUP-RESTORE.md` | PostgreSQL backup model, local restore drill, PITR production requirements (no cloud vendor in app code) |
+| `AUTH-SECURITY.md` | Consumer auth security operations: stuffing, HumanChallenge/email/SMS/Valkey outage, takeover, secret rotation |
 
 ### `/docs/security/` — Production security baseline
 

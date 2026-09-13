@@ -108,12 +108,14 @@ Successful removal of a live credential performs logout-all (ADR-002 §12).
 
 ## Security events
 
-AUTH-B does **not** add durable auth audit event types. Identity outbox today carries notification intents, not auth audit. Session revoked / passkey added/removed / step-up success/failure are deferred to AUTH-C.
+AUTH-C writes controlled `identity.auth.security` v1 rows to `platform.outbox_events` (no new table). Payload is operational metadata only (user/session management ids, auth method, result, reason class, request_id, trace_id). Unknown-account login failures omit user id and never include the submitted identifier. Rate-limit/challenge events use outbox idempotency so stuffing cannot flood PostgreSQL. The worker logs allowlisted fields and completes the row. Events are **not** a Trust signal.
 
-## Remaining AUTH-C work (not claimed done)
+State-changing events (`auth.login.success`, `auth.logout`, `auth.session.revoked`, `auth.sessions.revoked_others`, `auth.password_reset.completed`, `auth.passkey.added`, `auth.passkey.removed`, `auth.step_up.success`) are written on the same PostgreSQL transaction as the domain mutation when both occur. Outbox insert failure rolls the mutation back; the HTTP request does not succeed. Observational/attempt events (`auth.login.failed`, `auth.step_up.failed`, `auth.rate_limit.triggered`, `auth.challenge.required`, `auth.challenge.failed`) remain best-effort.
 
-- Production human-challenge vendor
-- Full auth audit/outbox event program
+## Remaining work (not claimed done)
+
+- Production human-challenge vendor onboarding (port + fail-closed stub exist)
+- Email/SMS vendor onboarding (channel modes exist; no adapter)
 - Email/phone change and authenticated password-change product endpoints (reuse Step-Up)
 - Device binding / privacy-minimized device labels (schema)
 - Periodic session rotation (OI-002-03)

@@ -36,13 +36,16 @@ const (
 	ReasonProviderUnavailable  RiskReason = "provider_unavailable"
 	ReasonStorageUnavailable   RiskReason = "storage_unavailable"
 	ReasonSuspiciousAuthState  RiskReason = "suspicious_auth_state"
+	ReasonInvalidCredentials   RiskReason = "invalid_credentials"
+	ReasonUnknownOrInvalid     RiskReason = "unknown_or_invalid"
 )
 
 func (r RiskReason) valid() bool {
 	switch r {
 	case ReasonNone, ReasonVelocityIP, ReasonVelocityAccount, ReasonVelocityTarget,
 		ReasonChallengeRequired, ReasonChallengeFailed, ReasonProviderUnavailable,
-		ReasonStorageUnavailable, ReasonSuspiciousAuthState:
+		ReasonStorageUnavailable, ReasonSuspiciousAuthState,
+		ReasonInvalidCredentials, ReasonUnknownOrInvalid:
 		return true
 	default:
 		return false

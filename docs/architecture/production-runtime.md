@@ -35,7 +35,9 @@ Unset `APP_ENV` loads as `development`. Invalid values fail process start. Stagi
 
 **Optional:** `HTTP_ADDR` (default `:8080`), `SHUTDOWN_TIMEOUT` (default `10s`), `DB_CONNECT_TIMEOUT` (default `5s`), `DB_MAX_CONNS` / `DB_MIN_CONNS` / `DB_MAX_CONN_LIFETIME` / `DB_MAX_CONN_IDLE_TIME`, `LOG_LEVEL` (default `info`), notification channel modes (default `disabled`), media scanner requirement flags, staff IdP triple (issuer/audience/JWKS).
 
-**Provider-dependent:** `STAFF_IDP_*` (complete or empty; partial fails closed; adapter still required to register staff HTTP), `NOTIFICATIONS_EMAIL_MODE` / `NOTIFICATIONS_SMS_MODE`=`external` (adapter required at worker start), EİDS official adapter (unconfigured gateway returns unavailable, never verified), object-storage workload identity (config path exists; client wiring waits hosting).
+**Provider-dependent / AUTH launch blockers:** Production HumanChallenge vendor is not selected (`IDENTITY_HUMAN_CHALLENGE_PROVIDER=unconfigured` fail-closed when operations are required; `fake` rejected in staging/production). `NOTIFICATIONS_EMAIL_MODE` / `NOTIFICATIONS_SMS_MODE`=`external` requires a registered adapter at worker start; `disabled` never marks delivery sent. `STAFF_IDP_*` (complete or empty; partial fails closed; adapter still required to register staff HTTP), EİDS official adapter (unconfigured gateway returns unavailable, never verified), object-storage workload identity (config path exists; client wiring waits hosting).
+
+Process start logs `auth_provider_launch_blocked` with `human_challenge_vendor`, `email_vendor`, and/or `sms_vendor` when those adapters are not production-wired. See `docs/operations/AUTH-SECURITY.md`.
 
 **Development-only:** `ALLOW_INSECURE_COOKIES` (rejected in staging/production; cookies remain `__Host-` + Secure in handlers). Disabled object storage. Unset Valkey / WebAuthn RP at config load.
 
@@ -54,7 +56,9 @@ External provider outage (EİDS, email/SMS, staff IdP, object storage) is not pr
 
 **PostgreSQL/PostGIS:** source of truth. Pool bounds are optional env (`DB_MAX_*`). Migrations: `go run ./cmd/migrate up` (or `down 1` / `version`) only. No destructive auto-migrate on boot.
 
-**Valkey:** non-durable. No persistence assumption. When unavailable: auth abuse / issuance rate limits fail closed (`unavailable`); human challenge, when required, fails closed; **step-up elevation fails closed** (require recent-strong again; never grant); **first-passkey bootstrap fails closed** (never grant enrollment authority); session hot cache still rehydrates from PostgreSQL; never reconstruct business truth from Valkey. See `docs/architecture/auth-abuse.md` and `docs/architecture/auth-session.md`.
+**Valkey:** non-durable. No persistence assumption. When unavailable: auth abuse / issuance rate limits fail closed (`unavailable`); human challenge, when required, fails closed; **step-up elevation fails closed** (require recent-strong again; never grant); **first-passkey bootstrap fails closed** (never grant enrollment authority); session hot cache still rehydrates from PostgreSQL; never reconstruct business truth from Valkey. See `docs/architecture/auth-abuse.md`, `docs/architecture/auth-session.md`, and `docs/operations/AUTH-SECURITY.md`.
+
+Auth security audit uses `platform.outbox_events` (`identity.auth.security` v1). No Kafka. Worker completes those events after allowlisted logging.
 
 **Object storage:** S3-compatible adapter. Originals are private quarantine (`media/listing-images/{owner}/{asset}/{random}`); public listing media uses processed keys only (`.../p/{random}`). Production requires explicit bucket/endpoint/region and either static keys or workload-identity config (adapter for workload is unwired until hosting). `OBJECT_STORAGE_PUBLIC_BASE_URL` is processed-media delivery only. CDN, when chosen, attaches in front of processed objects — see `docs/architecture/media-pipeline.md`. Upload presign TTL is capped at 15 minutes. Worker reclaims expired pending/rejected quarantine objects; it never deletes `ready` media by age.
 

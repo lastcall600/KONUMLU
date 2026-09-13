@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"backend/internal/identity"
 	notifyinfra "backend/internal/infrastructure/notifications"
 	listingcontracts "backend/internal/listings/contracts"
 	locationcontracts "backend/internal/location/contracts"
@@ -72,6 +73,9 @@ func TestNewHandlerRegistryRegistersIntentHandler(t *testing.T) {
 	}
 	if _, ok := reg.Lookup(txncontracts.EventTypeCompleted, txncontracts.EventVersion); !ok {
 		t.Fatal("cmd/worker must register transactions.transaction.completed v1")
+	}
+	if _, ok := reg.Lookup(identity.AuthSecurityEventType, identity.AuthSecurityEventVersion); !ok {
+		t.Fatal("cmd/worker must register identity.auth.security v1")
 	}
 	if _, ok := reg.Lookup(contracts.IntentEventType, 2); ok {
 		t.Fatal("unknown version must not be registered")

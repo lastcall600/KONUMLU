@@ -373,6 +373,7 @@ type memIntentEnqueuer struct {
 	keys       map[string]struct{}
 	enqueues   int
 	fail       bool
+	failType   string
 	conflict   bool
 	forceKey   string
 }
@@ -389,6 +390,9 @@ func (e *memIntentEnqueuer) seedKey(key string) {
 func (e *memIntentEnqueuer) Enqueue(ctx context.Context, exec outbox.Execer, in outbox.NewEvent) (outbox.Event, error) {
 	e.enqueues++
 	if e.fail {
+		return outbox.Event{}, errUnavailable
+	}
+	if e.failType != "" && in.EventType == e.failType {
 		return outbox.Event{}, errUnavailable
 	}
 	if e.conflict {

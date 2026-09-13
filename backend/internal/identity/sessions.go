@@ -29,6 +29,7 @@ type Sessions struct {
 	policy      SessionPolicy
 	cachePolicy SessionCachePolicy
 	now         func() time.Time
+	security    TxSecurityRecorder
 }
 
 func NewSessions(store sessionStore, policy SessionPolicy, hot sessionHotCache, cachePolicy SessionCachePolicy, now func() time.Time) (*Sessions, error) {
@@ -48,6 +49,19 @@ func NewSessions(store sessionStore, policy SessionPolicy, hot sessionHotCache, 
 }
 
 func (s *Sessions) Create(ctx context.Context, userID ID, deviceID *ID) (IssuedSession, error) {
+	return s.CreateWithSecurity(ctx, userID, deviceID, SecurityRecord{})
+}
+
+// BindDurableSecurity attaches the AUTH-C outbox writer used for atomic session mutations.
+func (s *Sessions) BindDurableSecurity(rec TxSecurityRecorder) {
+	if s == nil {
+		return
+	}
+	s.security = rec
+}
+
+// CreateWithSecurity inserts the session and required security event in one PostgreSQL transaction when possible.
+func (s *Sessions) CreateWithSecurity(ctx context.Context, userID ID, deviceID *ID, rec SecurityRecord) (IssuedSession, error) {
 	now := s.now()
 	user, err := s.store.GetUser(ctx, userID)
 	if err != nil {
@@ -93,8 +107,8 @@ func (s *Sessions) Create(ctx context.Context, userID ID, deviceID *ID) (IssuedS
 	if err := AuthorizeSession(now, user, device, session); err != nil {
 		return IssuedSession{}, err
 	}
-	if err := s.store.InsertSession(ctx, session); err != nil {
-		return IssuedSession{}, mapStoreErr(err)
+	if err := s.persistSession(ctx, session, rec); err != nil {
+		return IssuedSession{}, err
 	}
 	return IssuedSession{Session: session, RawToken: raw}, nil
 }
@@ -196,7 +210,7 @@ func (s *Sessions) ListActiveForUser(ctx context.Context, userID ID) ([]Session,
 	return out, nil
 }
 
-func (s *Sessions) RevokeOthers(ctx context.Context, userID, keepSessionID ID) error {
+func (s *Sessions) RevokeOthersWithSecurity(ctx context.Context, userID, keepSessionID ID, rec SecurityRecord) error {
 	if userID.IsZero() || keepSessionID.IsZero() {
 		return errZeroID
 	}
@@ -210,14 +224,40 @@ func (s *Sessions) RevokeOthers(ctx context.Context, userID, keepSessionID ID) e
 	if err := s.authorizeStored(ctx, keep); err != nil {
 		return err
 	}
-	hashes, err := s.store.RevokeOtherSessionsForUser(ctx, userID, keepSessionID, s.now())
+	now := s.now()
+	if store, ok := s.store.(sessionMutationStore); ok && s.security != nil && rec.Type != "" {
+		tx, err := store.Begin(ctx)
+		if err != nil {
+			return mapStoreErr(err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		hashes, err := store.RevokeOtherSessionsForUserTx(ctx, tx, userID, keepSessionID, now)
+		if err != nil {
+			return mapStoreErr(err)
+		}
+		if err := s.security.RecordOn(ctx, tx, rec); err != nil {
+			return err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return mapStoreErr(err)
+		}
+		for _, hash := range hashes {
+			s.invalidateHot(ctx, hash)
+		}
+		return nil
+	}
+	hashes, err := s.store.RevokeOtherSessionsForUser(ctx, userID, keepSessionID, now)
 	if err != nil {
 		return mapStoreErr(err)
 	}
 	for _, hash := range hashes {
 		s.invalidateHot(ctx, hash)
 	}
-	return nil
+	return s.recordAfterMutation(ctx, rec)
+}
+
+func (s *Sessions) RevokeOthers(ctx context.Context, userID, keepSessionID ID) error {
+	return s.RevokeOthersWithSecurity(ctx, userID, keepSessionID, SecurityRecord{})
 }
 
 func (s *Sessions) GetOwned(ctx context.Context, actorUserID, sessionID ID) (Session, error) {
@@ -236,16 +276,7 @@ func (s *Sessions) GetOwned(ctx context.Context, actorUserID, sessionID ID) (Ses
 }
 
 func (s *Sessions) Revoke(ctx context.Context, sessionID ID) error {
-	if sessionID.IsZero() {
-		return errZeroID
-	}
-	if err := mapStoreErr(s.store.RevokeSession(ctx, sessionID, s.now())); err != nil {
-		return err
-	}
-	if session, err := s.store.GetSession(ctx, sessionID); err == nil {
-		s.invalidateHot(ctx, session.TokenHash)
-	}
-	return nil
+	return s.RevokeWithSecurity(ctx, sessionID, SecurityRecord{})
 }
 
 func (s *Sessions) RevokeAllForUser(ctx context.Context, userID ID) error {
@@ -313,8 +344,87 @@ func mapStoreErr(err error) error {
 	}
 	if errors.Is(err, errUnavailable) || errors.Is(err, errNotFound) || errors.Is(err, errZeroID) ||
 		errors.Is(err, errSessionRevoked) || errors.Is(err, errUnauthenticated) ||
-		errors.Is(err, errSessionIdleExpired) || errors.Is(err, errSessionAbsExpired) {
+		errors.Is(err, errSessionIdleExpired) || errors.Is(err, errSessionAbsExpired) ||
+		errors.Is(err, errInvalidAbusePolicy) {
 		return err
 	}
 	return errUnavailable
+}
+
+type sessionMutationStore interface {
+	transactor
+	InsertSessionTx(ctx context.Context, tx transaction, session Session) error
+	RevokeSessionTx(ctx context.Context, tx transaction, id ID, at time.Time) error
+	RevokeOtherSessionsForUserTx(ctx context.Context, tx transaction, userID, keepSessionID ID, at time.Time) ([][]byte, error)
+}
+
+func (s *Sessions) persistSession(ctx context.Context, session Session, rec SecurityRecord) error {
+	if rec.SessionID.IsZero() {
+		rec.SessionID = session.ID
+	}
+	if rec.UserID.IsZero() {
+		rec.UserID = session.UserID
+	}
+	if store, ok := s.store.(sessionMutationStore); ok && s.security != nil && rec.Type != "" {
+		tx, err := store.Begin(ctx)
+		if err != nil {
+			return mapStoreErr(err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		if err := store.InsertSessionTx(ctx, tx, session); err != nil {
+			return mapStoreErr(err)
+		}
+		if err := s.security.RecordOn(ctx, tx, rec); err != nil {
+			return err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return mapStoreErr(err)
+		}
+		return nil
+	}
+	if err := s.store.InsertSession(ctx, session); err != nil {
+		return mapStoreErr(err)
+	}
+	return s.recordAfterMutation(ctx, rec)
+}
+
+func (s *Sessions) RevokeWithSecurity(ctx context.Context, sessionID ID, rec SecurityRecord) error {
+	if sessionID.IsZero() {
+		return errZeroID
+	}
+	now := s.now()
+	if store, ok := s.store.(sessionMutationStore); ok && s.security != nil && rec.Type != "" {
+		tx, err := store.Begin(ctx)
+		if err != nil {
+			return mapStoreErr(err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		if err := store.RevokeSessionTx(ctx, tx, sessionID, now); err != nil {
+			return mapStoreErr(err)
+		}
+		if err := s.security.RecordOn(ctx, tx, rec); err != nil {
+			return err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return mapStoreErr(err)
+		}
+		if session, err := s.store.GetSession(ctx, sessionID); err == nil {
+			s.invalidateHot(ctx, session.TokenHash)
+		}
+		return nil
+	}
+	if err := mapStoreErr(s.store.RevokeSession(ctx, sessionID, now)); err != nil {
+		return err
+	}
+	if session, err := s.store.GetSession(ctx, sessionID); err == nil {
+		s.invalidateHot(ctx, session.TokenHash)
+	}
+	return s.recordAfterMutation(ctx, rec)
+}
+
+func (s *Sessions) recordAfterMutation(ctx context.Context, rec SecurityRecord) error {
+	if rec.Type == "" || s.security == nil {
+		return nil
+	}
+	return s.security.RecordOn(ctx, nil, rec)
 }

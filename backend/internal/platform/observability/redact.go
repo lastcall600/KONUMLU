@@ -22,6 +22,7 @@ var safeLogKeys = map[string]struct{}{
 	"authoperation": {}, "riskdecision": {}, "reasoncode": {},
 	"ratelimitdimension": {}, "challenged": {}, "challengeprovider": {}, "challengeok": {},
 	"addr": {}, "eventtype": {}, "eventversion": {}, "eventid": {},
+	"userid": {}, "sessionid": {}, "authmethod": {}, "result": {},
 	"mediaid": {}, "mediastatus": {}, "processingoutcome": {}, "objectcategory": {},
 }
 
