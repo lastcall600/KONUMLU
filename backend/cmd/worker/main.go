@@ -115,7 +115,15 @@ func newRelay(ctx context.Context, cfg config.Config, pool *db.Pool) (*outbox.Re
 	if err != nil {
 		return nil, err
 	}
-	reg, err := newHandlerRegistry(notifyStore, delivery, processHandler, searchHandler, trustHandler, reviewAggHandler, completionHandler)
+	elig, err := identity.NewNotificationEligibilityReader(identity.NewPostgresStore(pool))
+	if err != nil {
+		return nil, err
+	}
+	materializer, err := notifications.NewMaterializer(notifyStore, elig, nil)
+	if err != nil {
+		return nil, err
+	}
+	reg, err := newHandlerRegistry(notifyStore, delivery, processHandler, searchHandler, trustHandler, reviewAggHandler, completionHandler, notifications.NewAuthSecurityNotifyHandler(materializer))
 	if err != nil {
 		return nil, err
 	}
@@ -143,7 +151,7 @@ func outboxPolicy(cfg config.Config) outbox.Policy {
 	}
 }
 
-func newHandlerRegistry(store notifications.DeliveryPersister, delivery *notifications.DeliveryService, process, searchHandler, trustHandler, reviewAggHandler, completionHandler outbox.Handler) (*outbox.Registry, error) {
+func newHandlerRegistry(store notifications.DeliveryPersister, delivery *notifications.DeliveryService, process, searchHandler, trustHandler, reviewAggHandler, completionHandler, notifySecurity outbox.Handler) (*outbox.Registry, error) {
 	h, err := notifications.NewIntentHandler(store, delivery)
 	if err != nil {
 		return nil, err
@@ -189,7 +197,13 @@ func newHandlerRegistry(store notifications.DeliveryPersister, delivery *notific
 	if err := reg.Register(txncontracts.EventTypeCompleted, txncontracts.EventVersion, completionHandler); err != nil {
 		return nil, err
 	}
-	if err := reg.Register(identity.AuthSecurityEventType, identity.AuthSecurityEventVersion, identity.NewAuthSecurityHandler()); err != nil {
+	if notifySecurity == nil {
+		return nil, notifications.ErrStoreRequired
+	}
+	if err := reg.Register(identity.AuthSecurityEventType, identity.AuthSecurityEventVersion, sequentialOutboxHandlers{
+		identity.NewAuthSecurityHandler(),
+		notifySecurity,
+	}); err != nil {
 		return nil, err
 	}
 	return reg, nil

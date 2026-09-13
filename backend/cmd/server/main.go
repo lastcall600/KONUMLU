@@ -40,6 +40,8 @@ import (
 	moderationhttp "backend/internal/moderation/httpapi"
 	"backend/internal/needs"
 	needshttp "backend/internal/needs/httpapi"
+	"backend/internal/notifications"
+	notifyhttp "backend/internal/notifications/httpapi"
 	"backend/internal/offers"
 	offershttp "backend/internal/offers/httpapi"
 	"backend/internal/payments"
@@ -227,9 +229,14 @@ func run() error {
 		return fmt.Errorf("review aggregates staff http: %w", err)
 	}
 
+	notificationsHandler, err := newNotificationsHTTP(pool, cfg, sessions)
+	if err != nil {
+		return fmt.Errorf("notifications http: %w", err)
+	}
+
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr,
-		Handler: observability.Wrap(newMux(composeReady(pool.Ready, cacheReady), identityHandler, publicProfileHandler, mediaHandler, listingsHandler, masterdataHandler, searchHandler, favoritesHandler, savedSearchHandler, messagingHandler, verifiedHandler, trustHandler, reviewsHandler, reviewAggregatesHandler, moderationHandler, businessesHandler, needsHandler, offersHandler, transactionsHandler, paymentsHandler, deliveriesHandler, disputesHandler, staffRoutes{
+		Handler: observability.Wrap(newMux(composeReady(pool.Ready, cacheReady), identityHandler, publicProfileHandler, mediaHandler, listingsHandler, masterdataHandler, searchHandler, favoritesHandler, savedSearchHandler, messagingHandler, verifiedHandler, trustHandler, reviewsHandler, reviewAggregatesHandler, moderationHandler, businessesHandler, needsHandler, offersHandler, transactionsHandler, paymentsHandler, deliveriesHandler, disputesHandler, notificationsHandler, staffRoutes{
 			moderation: moderationStaff,
 			disputes:   disputesStaff,
 			identity:   identityStaff,
@@ -265,7 +272,7 @@ func shutdownHTTP(srv *http.Server, timeout time.Duration) error {
 	return srv.Shutdown(ctx)
 }
 
-func newMux(ready health.CheckFunc, identityHandler *httpapi.Handler, publicProfileHandler *publicprofile.Handler, mediaHandler *mediahttp.Handler, listingsHandler *listingshttp.Handler, masterdataHandler *masterdatahttp.Handler, searchHandler *searchhttp.Handler, favoritesHandler *favoriteshttp.Handler, savedSearchHandler *savedsearchhttp.Handler, messagingHandler *messaginghttp.Handler, verifiedHandler *verifiedhttp.Handler, trustHandler *trusthttp.Handler, reviewsHandler *reviewshttp.Handler, reviewAggregatesHandler *reviewaggregateshttp.Handler, moderationHandler *moderationhttp.Handler, businessesHandler *businesseshttp.Handler, needsHandler *needshttp.Handler, offersHandler *offershttp.Handler, transactionsHandler *transactionshttp.Handler, paymentsHandler *paymentshttp.Handler, deliveriesHandler *deliverieshttp.Handler, disputesHandler *disputeshttp.Handler, staff staffRoutes) http.Handler {
+func newMux(ready health.CheckFunc, identityHandler *httpapi.Handler, publicProfileHandler *publicprofile.Handler, mediaHandler *mediahttp.Handler, listingsHandler *listingshttp.Handler, masterdataHandler *masterdatahttp.Handler, searchHandler *searchhttp.Handler, favoritesHandler *favoriteshttp.Handler, savedSearchHandler *savedsearchhttp.Handler, messagingHandler *messaginghttp.Handler, verifiedHandler *verifiedhttp.Handler, trustHandler *trusthttp.Handler, reviewsHandler *reviewshttp.Handler, reviewAggregatesHandler *reviewaggregateshttp.Handler, moderationHandler *moderationhttp.Handler, businessesHandler *businesseshttp.Handler, needsHandler *needshttp.Handler, offersHandler *offershttp.Handler, transactionsHandler *transactionshttp.Handler, paymentsHandler *paymentshttp.Handler, deliveriesHandler *deliverieshttp.Handler, disputesHandler *disputeshttp.Handler, notificationsHandler *notifyhttp.Handler, staff staffRoutes) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("GET /healthz", health.Handler())
 	mux.Handle("GET /readyz", health.ReadyHandler(ready))
@@ -331,6 +338,9 @@ func newMux(ready health.CheckFunc, identityHandler *httpapi.Handler, publicProf
 	}
 	if disputesHandler != nil {
 		disputesHandler.Register(mux)
+	}
+	if notificationsHandler != nil {
+		notificationsHandler.Register(mux)
 	}
 	if staff.moderation != nil {
 		staff.moderation.Register(mux)
@@ -852,6 +862,34 @@ func newSearchHTTP(pool *db.Pool) (*searchhttp.Handler, error) {
 		return nil, err
 	}
 	return searchhttp.New(svc)
+}
+
+func newNotificationsHTTP(pool *db.Pool, cfg config.Config, sessions *identity.Sessions) (*notifyhttp.Handler, error) {
+	svc, err := notifications.NewConsumerService(notifications.NewPostgresStore(pool), nil)
+	if err != nil {
+		return nil, err
+	}
+	return notifyhttp.New(identityNotificationSessions{sessions: sessions}, svc, cfg.WebAuthnRPOrigins)
+}
+
+type identityNotificationSessions struct {
+	sessions *identity.Sessions
+}
+
+func (s identityNotificationSessions) Resolve(ctx context.Context, rawToken string) (notifications.ID, error) {
+	if s.sessions == nil {
+		return notifications.ID{}, notifications.ErrUnavailable
+	}
+	session, err := s.sessions.Resolve(ctx, rawToken)
+	if err != nil {
+		if identity.Classify(err) == identity.FailureUnauthenticated {
+			return notifications.ID{}, notifyhttp.ErrUnauthenticated
+		}
+		return notifications.ID{}, notifications.ErrUnavailable
+	}
+	var id notifications.ID
+	copy(id[:], session.UserID[:])
+	return id, nil
 }
 
 func newFavoritesHTTP(pool *db.Pool, cfg config.Config, sessions *identity.Sessions) (*favoriteshttp.Handler, error) {

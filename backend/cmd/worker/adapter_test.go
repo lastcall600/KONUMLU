@@ -100,7 +100,7 @@ func TestNewHandlerRegistryDoesNotRegisterFakeProvider(t *testing.T) {
 	if delivery.HasSender(contracts.ChannelEmail) || delivery.HasSender(contracts.ChannelSMS) {
 		t.Fatal("production delivery service must not expose a sender")
 	}
-	reg, err := newHandlerRegistry(store, delivery, mustTestMediaHandler(t), mustTestSearchHandler(t), mustTestTrustHandler(t), mustTestReviewAggregatesHandler(t), mustTestCompletionHandler(t))
+	reg, err := newHandlerRegistry(store, delivery, mustTestMediaHandler(t), mustTestSearchHandler(t), mustTestTrustHandler(t), mustTestReviewAggregatesHandler(t), mustTestCompletionHandler(t), noopNotifySecurity())
 	if err != nil {
 		t.Fatal(err)
 	}

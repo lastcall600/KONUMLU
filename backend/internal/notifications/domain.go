@@ -20,6 +20,8 @@ var (
 	errMaterialUnusable = errors.New("verification material not deliverable")
 	errChannelMismatch  = errors.New("notification channel does not match verification kind")
 	errProviderRequired = errors.New("notification provider required")
+	errNotFound         = errors.New("notification resource not found")
+	errInvalidQuery     = errors.New("invalid notification query")
 )
 
 // Exported sentinels for worker wiring and tests.
@@ -33,6 +35,8 @@ var (
 	ErrMaterialUnusable = errMaterialUnusable
 	ErrChannelMismatch  = errChannelMismatch
 	ErrProviderRequired = errProviderRequired
+	ErrNotFound         = errNotFound
+	ErrInvalidQuery     = errInvalidQuery
 )
 
 type Status string
