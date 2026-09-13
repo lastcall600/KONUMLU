@@ -44,7 +44,7 @@ import (
 func TestHealthzRouteIndependentOfDatabase(t *testing.T) {
 	mux := newMux(func(ctx context.Context) error {
 		return errors.New("database unavailable")
-	}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, staffRoutes{})
+	}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, staffRoutes{})
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
@@ -64,7 +64,7 @@ func TestHealthzRouteIndependentOfDatabase(t *testing.T) {
 }
 
 func TestReadyzRouteOK(t *testing.T) {
-	mux := newMux(func(ctx context.Context) error { return nil }, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, staffRoutes{})
+	mux := newMux(func(ctx context.Context) error { return nil }, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, staffRoutes{})
 	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -76,7 +76,7 @@ func TestReadyzRouteOK(t *testing.T) {
 func TestHealthzRouteIndependentOfValkey(t *testing.T) {
 	mux := newMux(func(ctx context.Context) error {
 		return errors.New("cache unavailable")
-	}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, staffRoutes{})
+	}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, staffRoutes{})
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
@@ -91,7 +91,7 @@ func TestComposeReadyRequiresValkeyWhenConfigured(t *testing.T) {
 		func(ctx context.Context) error { return nil },
 		func(ctx context.Context) error { return errors.New("cache unavailable") },
 	)
-	mux := newMux(ready, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, staffRoutes{})
+	mux := newMux(ready, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, staffRoutes{})
 	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -117,7 +117,7 @@ func TestComposeReadySkipsNilValkeyCheck(t *testing.T) {
 func TestReadyzRouteUnavailable(t *testing.T) {
 	mux := newMux(func(ctx context.Context) error {
 		return errors.New("connection refused")
-	}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, staffRoutes{})
+	}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, staffRoutes{})
 	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -233,7 +233,7 @@ func TestBusinessesPublicRouteWired(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mux := newMux(func(ctx context.Context) error { return nil }, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, h, nil, nil, nil, nil, nil, nil, staffRoutes{})
+	mux := newMux(func(ctx context.Context) error { return nil }, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, h, nil, nil, nil, nil, nil, nil, nil, staffRoutes{})
 	req := httptest.NewRequest(http.MethodGet, "/v1/public/businesses/"+id.String(), nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -278,7 +278,7 @@ func TestNeedsOwnerRouteWired(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mux := newMux(func(ctx context.Context) error { return nil }, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, h, nil, nil, nil, nil, nil, staffRoutes{})
+	mux := newMux(func(ctx context.Context) error { return nil }, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, h, nil, nil, nil, nil, nil, nil, staffRoutes{})
 	req := httptest.NewRequest(http.MethodGet, "/v1/needs", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -322,7 +322,7 @@ func TestOffersRouteWired(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mux := newMux(func(ctx context.Context) error { return nil }, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, h, nil, nil, nil, nil, staffRoutes{})
+	mux := newMux(func(ctx context.Context) error { return nil }, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, h, nil, nil, nil, nil, nil, staffRoutes{})
 	req := httptest.NewRequest(http.MethodGet, "/v1/offers/mine", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -363,7 +363,7 @@ func TestTransactionsRouteWired(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mux := newMux(func(ctx context.Context) error { return nil }, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, h, nil, nil, nil, staffRoutes{})
+	mux := newMux(func(ctx context.Context) error { return nil }, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, h, nil, nil, nil, nil, staffRoutes{})
 	req := httptest.NewRequest(http.MethodGet, "/v1/transactions/"+id.String(), nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -398,7 +398,7 @@ func TestPaymentsRouteWired(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mux := newMux(func(ctx context.Context) error { return nil }, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, h, nil, nil, staffRoutes{})
+	mux := newMux(func(ctx context.Context) error { return nil }, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, h, nil, nil, nil, staffRoutes{})
 	req := httptest.NewRequest(http.MethodGet, "/v1/payments/"+id.String(), nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -440,7 +440,7 @@ func TestDeliveriesRouteWired(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mux := newMux(func(ctx context.Context) error { return nil }, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, h, nil, staffRoutes{})
+	mux := newMux(func(ctx context.Context) error { return nil }, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, h, nil, nil, staffRoutes{})
 	req := httptest.NewRequest(http.MethodGet, "/v1/deliveries/"+id.String(), nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -479,7 +479,7 @@ func TestDisputesRouteWired(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mux := newMux(func(ctx context.Context) error { return nil }, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, h, staffRoutes{})
+	mux := newMux(func(ctx context.Context) error { return nil }, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, h, nil, staffRoutes{})
 	req := httptest.NewRequest(http.MethodGet, "/v1/disputes/"+id.String(), nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -499,7 +499,7 @@ func TestDisputesRouteWired(t *testing.T) {
 }
 
 func TestStaffRoutesUnregisteredWithoutProvider(t *testing.T) {
-	mux := newMux(func(ctx context.Context) error { return nil }, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, staffRoutes{})
+	mux := newMux(func(ctx context.Context) error { return nil }, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, staffRoutes{})
 	for _, path := range []string{
 		"/v1/staff/moderation/reports",
 		"/v1/staff/identity/profiles/00000000-0000-4000-8000-000000000001",
@@ -589,7 +589,7 @@ func TestStaffDevAuthorizerQueueRoute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mux := newMux(func(ctx context.Context) error { return nil }, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, staffRoutes{moderation: sh})
+	mux := newMux(func(ctx context.Context) error { return nil }, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, staffRoutes{moderation: sh})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/staff/moderation/reports", nil)
 	rec := httptest.NewRecorder()
@@ -688,7 +688,7 @@ func TestStaffDisputeRoutesRegisteredWhenAuthorizerPresent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mux := newMux(func(ctx context.Context) error { return nil }, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, h, staffRoutes{disputes: sh})
+	mux := newMux(func(ctx context.Context) error { return nil }, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, h, nil, staffRoutes{disputes: sh})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/staff/disputes/"+id.String(), nil)
 	rec := httptest.NewRecorder()
@@ -733,7 +733,7 @@ func (wiredDisputesSessions) Resolve(ctx context.Context, rawToken string) (disp
 func TestWrappedHealthzStillIndependentOfReady(t *testing.T) {
 	h := observability.Wrap(newMux(func(ctx context.Context) error {
 		return errors.New("database unavailable")
-	}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, staffRoutes{}))
+	}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, staffRoutes{}))
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)

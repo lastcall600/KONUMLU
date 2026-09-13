@@ -205,6 +205,22 @@ Storage disabled → **503** on initiate (not an authz grant).
 
 ---
 
+## 10. Notifications (consumer)
+
+| Endpoint | Unauth | Owner / participant | Other |
+|---|---|---|---|
+| GET `/v1/notification-preferences` | 401 | ALLOW (self effective settings) | cannot list another user |
+| PATCH `/v1/notification-preferences` | 401 | ALLOW + CSRF | body `userId` **400**; other session cannot write A |
+| GET `/v1/notification-consents` | 401 | ALLOW (self current) | cannot read another user |
+| POST `/v1/notification-consents` | 401 | ALLOW + CSRF (append-only) | cannot append as another user |
+| GET `/v1/notifications` | 401 | ALLOW (own inbox) | other user's items omitted |
+| POST `/v1/notifications/{id}/read` | 401 | ALLOW + CSRF; already-read OK | foreign id **404** |
+| POST `/v1/notifications/read-all` | 401 | ALLOW + CSRF (own unread) | does not touch other users |
+
+Wrong origin / missing CSRF on notification mutations → **403**.
+
+---
+
 ## Coverage map
 
 Machine-tested in this baseline (see `authorization-security` CI job):

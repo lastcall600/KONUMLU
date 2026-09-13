@@ -14,15 +14,15 @@ import (
 )
 
 const (
-	synthBearer     = "synth-staff-token-aaaa"
-	synthSession    = "synth-session-bbbb"
-	synthCSRF       = "synth-csrf-cccc"
-	synthOTP        = "246801"
-	synthQR         = "synth-qr-dddddddd"
-	synthPhone      = "+905551112233"
-	synthEmail      = "synth.user@example.test"
-	synthProvider   = "synth-webhook-eeee"
-	synthTCKN       = "10000000146"
+	synthBearer   = "synth-staff-token-aaaa"
+	synthSession  = "synth-session-bbbb"
+	synthCSRF     = "synth-csrf-cccc"
+	synthOTP      = "246801"
+	synthQR       = "synth-qr-dddddddd"
+	synthPhone    = "+905551112233"
+	synthEmail    = "synth.user@example.test"
+	synthProvider = "synth-webhook-eeee"
+	synthTCKN     = "10000000146"
 )
 
 func TestAccessLogKeepsSafeMetadataAndRedactsSecrets(t *testing.T) {
@@ -152,6 +152,21 @@ func TestStructuredLoggerRedactsSensitiveKeysWithoutDroppingIDs(t *testing.T) {
 	}
 	if row["upload_url"] != Redacted {
 		t.Fatalf("upload_url = %#v", row["upload_url"])
+	}
+}
+
+func TestNotificationDestinationsAndConsentEvidenceAreRedacted(t *testing.T) {
+	if !IsSensitiveKey("push_token") || !IsSensitiveKey("fcm_token") || !IsSensitiveKey("consent_payload") {
+		t.Fatal("expected notification destination keys to be sensitive")
+	}
+	if RedactAttrValue("email", synthEmail) != Redacted || RedactAttrValue("phone", synthPhone) != Redacted {
+		t.Fatal("email/phone")
+	}
+	if RedactAttrValue("push_token", "ExponentPushToken[synth]") != Redacted {
+		t.Fatal("push token")
+	}
+	if !IsSafeLogKey("suppression_reason") || !IsSafeLogKey("notify_purpose") || !IsSafeLogKey("notification_event") {
+		t.Fatal("safe notification metrics keys")
 	}
 }
 

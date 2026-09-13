@@ -24,6 +24,9 @@ var safeLogKeys = map[string]struct{}{
 	"addr": {}, "eventtype": {}, "eventversion": {}, "eventid": {},
 	"userid": {}, "sessionid": {}, "authmethod": {}, "result": {},
 	"mediaid": {}, "mediastatus": {}, "processingoutcome": {}, "objectcategory": {},
+	"notifypurpose": {}, "notificationevent": {}, "suppressionreason": {},
+	"deliveryoutcome": {}, "deliveryattempt": {}, "intentstatus": {},
+	"channelcode": {}, "intentid": {},
 }
 
 var sensitiveKeyExact = map[string]struct{}{
@@ -44,6 +47,9 @@ var sensitiveKeyExact = map[string]struct{}{
 	"signupproof": {}, "resetproof": {}, "challengetoken": {},
 	"humanchallenge": {}, "humanchallengeresponse": {}, "providersecret": {},
 	"destination": {}, "verificationsecret": {},
+	"pushtoken": {}, "fcmtoken": {}, "apnstoken": {}, "deviceendpoint": {},
+	"consentpayload": {}, "consentevidence": {}, "consentip": {},
+	"notificationbody": {}, "messagecontent": {}, "renderedhtml": {},
 	"ceremonytoken": {}, "stepup": {}, "webauthnchallenge": {},
 	"credentialrawid": {}, "passkeycredentialid": {},
 	"uploadurl": {}, "signedurl": {}, "presignedurl": {}, "objectkey": {},

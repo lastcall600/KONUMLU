@@ -178,3 +178,17 @@ Implemented and session-scoped; see matrix for representative rows:
 - Reviews (eligibility), review-summary `/me`
 
 Public catalog/search/review-summary routes are unauthenticated reads of published data only.
+
+## Notifications / privacy (implemented HTTP)
+
+Session-owned consumer surfaces (CSRF+Origin on mutations; no client `user_id`):
+
+| Method | Path | Notes |
+|---|---|---|
+| GET/PATCH | `/v1/notification-preferences` | Per-channel+scope overrides; required policy cannot be muted |
+| GET/POST | `/v1/notification-consents` | Append-only technical evidence; server owns seq/time/version/source |
+| GET | `/v1/notifications` | Owner inbox, opaque cursor |
+| POST | `/v1/notifications/{inboxId}/read` | Owner mark-one; foreign id 404; already-read idempotent |
+| POST | `/v1/notifications/read-all` | Owner unread only |
+
+Do not log destinations, OTP, consent payloads, or variables. Legacy verification send (`notifications.intent`) and moderation warning outbox remain. See `docs/architecture/notifications-policy.md`.

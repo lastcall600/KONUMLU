@@ -26,6 +26,10 @@ import (
 	verifiedcontracts "backend/internal/verified/contracts"
 )
 
+func noopNotifySecurity() outbox.Handler {
+	return outbox.HandlerFunc(func(context.Context, outbox.Event) error { return nil })
+}
+
 func TestRunRequiresConfig(t *testing.T) {
 	t.Setenv("DATABASE_URL", "")
 	err := run()
@@ -40,7 +44,7 @@ func TestRunRequiresConfig(t *testing.T) {
 func TestNewHandlerRegistryRegistersIntentHandler(t *testing.T) {
 	store := notifications.NewMemoryStore()
 	delivery := mustTestDelivery(t, store)
-	reg, err := newHandlerRegistry(store, delivery, mustTestMediaHandler(t), mustTestSearchHandler(t), mustTestTrustHandler(t), mustTestReviewAggregatesHandler(t), mustTestCompletionHandler(t))
+	reg, err := newHandlerRegistry(store, delivery, mustTestMediaHandler(t), mustTestSearchHandler(t), mustTestTrustHandler(t), mustTestReviewAggregatesHandler(t), mustTestCompletionHandler(t), noopNotifySecurity())
 	if err != nil {
 		t.Fatal(err)
 	}

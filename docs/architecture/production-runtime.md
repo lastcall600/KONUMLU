@@ -58,7 +58,7 @@ External provider outage (EİDS, email/SMS, staff IdP, object storage) is not pr
 
 **Valkey:** non-durable. No persistence assumption. When unavailable: auth abuse / issuance rate limits fail closed (`unavailable`); human challenge, when required, fails closed; **step-up elevation fails closed** (require recent-strong again; never grant); **first-passkey bootstrap fails closed** (never grant enrollment authority); session hot cache still rehydrates from PostgreSQL; never reconstruct business truth from Valkey. See `docs/architecture/auth-abuse.md`, `docs/architecture/auth-session.md`, and `docs/operations/AUTH-SECURITY.md`.
 
-Auth security audit uses `platform.outbox_events` (`identity.auth.security` v1). No Kafka. Worker completes those events after allowlisted logging.
+Auth security audit uses `platform.outbox_events` (`identity.auth.security` v1). No Kafka. Worker runs Identity allowlisted logging then Notifications materialization as one sequential handler. Transient notification failure retries the outbox row. Selected events create `notifications.intents`; audit-only events do not.
 
 **Object storage:** S3-compatible adapter. Originals are private quarantine (`media/listing-images/{owner}/{asset}/{random}`); public listing media uses processed keys only (`.../p/{random}`). Production requires explicit bucket/endpoint/region and either static keys or workload-identity config (adapter for workload is unwired until hosting). `OBJECT_STORAGE_PUBLIC_BASE_URL` is processed-media delivery only. CDN, when chosen, attaches in front of processed objects — see `docs/architecture/media-pipeline.md`. Upload presign TTL is capped at 15 minutes. Worker reclaims expired pending/rejected quarantine objects; it never deletes `ready` media by age.
 
@@ -102,4 +102,6 @@ GitHub Actions full pipeline is not introduced by this foundation. No automatic 
 
 ## Remaining hosting / provider decisions
 
-Cloud vendor; Kubernetes (not required for V1); OpenTofu/Terraform provider; object-storage product and workload-identity wiring; Staff IdP vendor; official EİDS adapter; email/SMS vendors; CDN for processed media; backup retention numbers.
+Cloud vendor; Kubernetes (not required for V1); OpenTofu/Terraform provider; object-storage product and workload-identity wiring; Staff IdP vendor; official EİDS adapter; email/SMS vendors; push/notification delivery vendors; CDN for processed media; backup retention numbers.
+
+Notification **policy and planning** (purpose, consent vs preference, event catalog, inbox) is in `internal/notifications`. Email/SMS/push vendors are not selected. Eligible email/SMS channel rows stay `pending` for NOTIFY-B. See `docs/architecture/notifications-policy.md`.
