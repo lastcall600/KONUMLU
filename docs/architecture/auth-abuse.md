@@ -2,7 +2,7 @@
 
 Identity-owned substrate for consumer authentication abuse protection. This is **not** a fraud engine, **not** Trust / Güven Pasaportu, and **not** complete 0C-AUTH.
 
-AUTH-B session lifecycle/step-up is documented in `auth-session.md`. AUTH-C remains open. Completing AUTH-A does not make consumer auth production-complete.
+AUTH-B session lifecycle/step-up is documented in `auth-session.md`. AUTH-C is implemented locally (`docs/operations/AUTH-SECURITY.md`) but production HumanChallenge/email/SMS vendors remain launch blockers. Completing AUTH-A does not make consumer auth production-complete.
 
 ## Rate-limit dimensions
 
@@ -112,6 +112,7 @@ No production challenge secrets are required for local proof.
 
 ## AUTH-B / AUTH-C
 
-AUTH-B is implemented locally (`docs/architecture/auth-session.md`): session rotation, idle Touch, security-center HTTP, passkey list/remove, Valkey Step-Up. HumanChallenge is not Step-Up. Device binding and auth audit events are not AUTH-B.
+AUTH-B is implemented locally (`docs/architecture/auth-session.md`): session rotation, idle Touch, security-center HTTP, passkey list/remove, Valkey Step-Up. HumanChallenge is not Step-Up. Device binding is not AUTH-C.
 
-AUTH-C and remaining 0C-AUTH: production human-challenge vendor adapter, durable auth security events, email/phone change and authenticated password-change product endpoints (reuse Step-Up), device binding schema, periodic session rotation (OI-002-03). Remember Me is **not** a current KONUMLU requirement. Passkey-first + optional Argon2id password fallback is unchanged.
+AUTH-C (this package): durable `identity.auth.security` v1 outbox events (safe metadata only; unknown-account login failures omit user id and identifiers). Production HumanChallenge vendor is **not** selected (`none` / `unconfigured`; `fake` rejected in staging/production). Email/SMS vendors are **not** selected (`disabled` default; `external` requires an adapter at worker start; Identity never claims "sent"). Classification: **PRODUCTION_CODE_READY_PROVIDER_BLOCKED**. Operator runbook: `docs/operations/AUTH-SECURITY.md`.
+

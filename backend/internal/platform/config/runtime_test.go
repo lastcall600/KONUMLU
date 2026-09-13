@@ -273,3 +273,25 @@ func TestHumanChallengeConfigGates(t *testing.T) {
 		t.Fatalf("provider = %q", cfg.HumanChallenge.Provider)
 	}
 }
+
+func TestAuthProviderLaunchBlockersAreExplicit(t *testing.T) {
+	setProductionRequiredEnv(t)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(cfg.AuthProviderLaunchBlockers(), ",")
+	for _, want := range []string{"human_challenge_vendor", "email_vendor", "sms_vendor"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("blockers = %q missing %s", got, want)
+		}
+	}
+}
+
+func TestProductionCannotDisableAbuseLimits(t *testing.T) {
+	setProductionRequiredEnv(t)
+	t.Setenv(envAuthIPMaxAttempts, "0")
+	if _, err := Load(); err == nil {
+		t.Fatal("zero IP max must fail")
+	}
+}

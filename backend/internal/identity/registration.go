@@ -80,6 +80,8 @@ type Registration struct {
 	passkeys   *Passkeys
 	ceremonies *Ceremonies
 	now        func() time.Time
+	txns       transactor
+	security   TxSecurityRecorder
 }
 
 func NewRegistration(wa *webauthn.WebAuthn, passkeys *Passkeys, ceremonies *Ceremonies, now func() time.Time) (*Registration, error) {
@@ -143,6 +145,18 @@ func (r *Registration) BeginRegistration(ctx context.Context, in BeginRegistrati
 }
 
 func (r *Registration) FinishRegistration(ctx context.Context, in FinishRegistrationInput) (PasskeyCredential, error) {
+	return r.FinishRegistrationWithSecurity(ctx, in, SecurityRecord{})
+}
+
+func (r *Registration) BindDurableSecurity(txns transactor, rec TxSecurityRecorder) {
+	if r == nil {
+		return
+	}
+	r.txns = txns
+	r.security = rec
+}
+
+func (r *Registration) FinishRegistrationWithSecurity(ctx context.Context, in FinishRegistrationInput, rec SecurityRecord) (PasskeyCredential, error) {
 	if in.UserID.IsZero() {
 		return PasskeyCredential{}, errUnauthenticated
 	}
@@ -197,10 +211,44 @@ func (r *Registration) FinishRegistration(ctx context.Context, in FinishRegistra
 		return PasskeyCredential{}, err
 	}
 
-	if err := r.passkeys.Create(ctx, mapped); err != nil {
+	if err := r.persistPasskey(ctx, mapped, rec); err != nil {
 		return PasskeyCredential{}, err
 	}
 	return mapped, nil
+}
+
+type passkeyMutationStore interface {
+	transactor
+	InsertPasskeyTx(ctx context.Context, tx transaction, credential PasskeyCredential) error
+	RevokePasskeyTx(ctx context.Context, tx transaction, id ID, at time.Time) error
+	RevokeSessionsForUserTx(ctx context.Context, tx transaction, userID ID, at time.Time) (int64, error)
+}
+
+func (r *Registration) persistPasskey(ctx context.Context, mapped PasskeyCredential, rec SecurityRecord) error {
+	if store, ok := r.txns.(passkeyMutationStore); ok && r.security != nil && rec.Type != "" {
+		tx, err := store.Begin(ctx)
+		if err != nil {
+			return mapStoreErr(err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		if err := store.InsertPasskeyTx(ctx, tx, mapped); err != nil {
+			return mapPasskeyStoreErr(err)
+		}
+		if err := r.security.RecordOn(ctx, tx, rec); err != nil {
+			return err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return mapStoreErr(err)
+		}
+		return nil
+	}
+	if err := r.passkeys.Create(ctx, mapped); err != nil {
+		return err
+	}
+	if rec.Type == "" || r.security == nil {
+		return nil
+	}
+	return r.security.RecordOn(ctx, nil, rec)
 }
 
 func registrationOptions(active []PasskeyCredential) []webauthn.RegistrationOption {

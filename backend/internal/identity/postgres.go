@@ -22,6 +22,28 @@ var (
 	_ activeIdentifierLookup = (*PostgresStore)(nil)
 )
 
+const insertSessionSQL = `
+		INSERT INTO identity.sessions (
+			id, user_id, device_id, token_hash,
+			created_at, last_seen_at, idle_expires_at, absolute_expires_at, revoked_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
+
+const revokeSessionSQL = `
+		UPDATE identity.sessions
+		SET revoked_at = $2
+		WHERE id = $1 AND revoked_at IS NULL`
+
+const insertPasskeySQL = `
+		INSERT INTO identity.passkey_credentials (
+			id, user_id, credential_id, public_key, sign_count,
+			backup_eligible, backup_state, transports, created_at, last_used_at, revoked_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
+
+const revokePasskeySQL = `
+		UPDATE identity.passkey_credentials
+		SET revoked_at = $2
+		WHERE id = $1 AND revoked_at IS NULL`
+
 const identifierSelectCols = `id, user_id, kind, value_canonical, verified_at, created_at, revoked_at`
 
 const challengeSelectCols = `id, kind, purpose, destination_canonical, token_hash, created_at, expires_at, consumed_at, failed_attempts, max_attempts`
@@ -93,11 +115,18 @@ func (p *PostgresStore) InsertSession(ctx context.Context, session Session) erro
 	if p.db == nil {
 		return errUnavailable
 	}
-	_, err := p.db.Exec(ctx, `
-		INSERT INTO identity.sessions (
-			id, user_id, device_id, token_hash,
-			created_at, last_seen_at, idle_expires_at, absolute_expires_at, revoked_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+	_, err := p.db.Exec(ctx, insertSessionSQL,
+		session.ID, session.UserID, session.DeviceID, session.TokenHash,
+		session.CreatedAt, session.LastSeenAt, session.IdleExpiresAt, session.AbsoluteExpiresAt, session.RevokedAt,
+	)
+	return mapDBErr(err)
+}
+
+func (p *PostgresStore) InsertSessionTx(ctx context.Context, tx transaction, session Session) error {
+	if tx == nil {
+		return errUnavailable
+	}
+	_, err := tx.Exec(ctx, insertSessionSQL,
 		session.ID, session.UserID, session.DeviceID, session.TokenHash,
 		session.CreatedAt, session.LastSeenAt, session.IdleExpiresAt, session.AbsoluteExpiresAt, session.RevokedAt,
 	)
@@ -159,10 +188,15 @@ func (p *PostgresStore) RevokeSession(ctx context.Context, id ID, at time.Time) 
 	if p.db == nil {
 		return errUnavailable
 	}
-	_, err := p.db.Exec(ctx, `
-		UPDATE identity.sessions
-		SET revoked_at = $2
-		WHERE id = $1 AND revoked_at IS NULL`, id, at)
+	_, err := p.db.Exec(ctx, revokeSessionSQL, id, at)
+	return mapDBErr(err)
+}
+
+func (p *PostgresStore) RevokeSessionTx(ctx context.Context, tx transaction, id ID, at time.Time) error {
+	if tx == nil {
+		return errUnavailable
+	}
+	_, err := tx.Exec(ctx, revokeSessionSQL, id, at)
 	return mapDBErr(err)
 }
 
@@ -288,15 +322,57 @@ func (p *PostgresStore) RevokeOtherSessionsForUser(ctx context.Context, userID, 
 	return out, nil
 }
 
+func (p *PostgresStore) RevokeOtherSessionsForUserTx(ctx context.Context, tx transaction, userID, keepSessionID ID, at time.Time) ([][]byte, error) {
+	if tx == nil {
+		return nil, errUnavailable
+	}
+	if userID.IsZero() || keepSessionID.IsZero() {
+		return nil, errZeroID
+	}
+	q, ok := tx.(txRowsQuerier)
+	if !ok {
+		return nil, errUnavailable
+	}
+	rows, err := q.Query(ctx, `
+		UPDATE identity.sessions
+		SET revoked_at = $3
+		WHERE user_id = $1 AND id <> $2 AND revoked_at IS NULL
+		RETURNING token_hash`, userID, keepSessionID, at)
+	if err != nil {
+		return nil, mapDBErr(err)
+	}
+	defer rows.Close()
+	out := make([][]byte, 0)
+	for rows.Next() {
+		var hash []byte
+		if scanErr := rows.Scan(&hash); scanErr != nil {
+			return nil, mapDBErr(scanErr)
+		}
+		out = append(out, cloneBytes(hash))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, mapDBErr(err)
+	}
+	return out, nil
+}
+
 func (p *PostgresStore) InsertPasskey(ctx context.Context, credential PasskeyCredential) error {
 	if p.db == nil {
 		return errUnavailable
 	}
-	_, err := p.db.Exec(ctx, `
-		INSERT INTO identity.passkey_credentials (
-			id, user_id, credential_id, public_key, sign_count,
-			backup_eligible, backup_state, transports, created_at, last_used_at, revoked_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+	_, err := p.db.Exec(ctx, insertPasskeySQL,
+		credential.ID, credential.UserID, credential.CredentialID, credential.PublicKey, credential.SignCount,
+		credential.BackupEligible, credential.BackupState, credential.Transports,
+		credential.CreatedAt, credential.LastUsedAt, credential.RevokedAt,
+	)
+	return mapDBErr(err)
+}
+
+func (p *PostgresStore) InsertPasskeyTx(ctx context.Context, tx transaction, credential PasskeyCredential) error {
+	if tx == nil {
+		return errUnavailable
+	}
+	_, err := tx.Exec(ctx, insertPasskeySQL,
 		credential.ID, credential.UserID, credential.CredentialID, credential.PublicKey, credential.SignCount,
 		credential.BackupEligible, credential.BackupState, credential.Transports,
 		credential.CreatedAt, credential.LastUsedAt, credential.RevokedAt,
@@ -392,10 +468,15 @@ func (p *PostgresStore) RevokePasskey(ctx context.Context, id ID, at time.Time) 
 	if p.db == nil {
 		return errUnavailable
 	}
-	_, err := p.db.Exec(ctx, `
-		UPDATE identity.passkey_credentials
-		SET revoked_at = $2
-		WHERE id = $1 AND revoked_at IS NULL`, id, at)
+	_, err := p.db.Exec(ctx, revokePasskeySQL, id, at)
+	return mapDBErr(err)
+}
+
+func (p *PostgresStore) RevokePasskeyTx(ctx context.Context, tx transaction, id ID, at time.Time) error {
+	if tx == nil {
+		return errUnavailable
+	}
+	_, err := tx.Exec(ctx, revokePasskeySQL, id, at)
 	return mapDBErr(err)
 }
 
@@ -1092,6 +1173,10 @@ func (p *PostgresStore) InsertPasswordCredentialTx(ctx context.Context, tx trans
 
 type txRowQuerier interface {
 	QueryRow(ctx context.Context, sql string, args ...any) db.Row
+}
+
+type txRowsQuerier interface {
+	Query(ctx context.Context, sql string, args ...any) (db.Rows, error)
 }
 
 func txQueryRow(tx transaction, ctx context.Context, sql string, args ...any) scanner {

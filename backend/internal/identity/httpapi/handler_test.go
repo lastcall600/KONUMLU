@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1447,6 +1448,7 @@ func (f *fakeRegistration) FinishRegistration(_ context.Context, in identity.Fin
 }
 
 type fakeCounter struct {
+	mu   sync.Mutex
 	n    map[string]int64
 	keys []string
 	err  error
@@ -1456,6 +1458,8 @@ func (f *fakeCounter) Increment(_ context.Context, key string, ttl time.Duration
 	if ttl <= 0 {
 		return 0, errors.New("ttl must be greater than zero")
 	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.err != nil {
 		return 0, f.err
 	}

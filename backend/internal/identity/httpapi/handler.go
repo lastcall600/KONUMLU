@@ -41,6 +41,20 @@ type sessionManager interface {
 	GetOwned(ctx context.Context, actorUserID, sessionID identity.ID) (identity.Session, error)
 }
 
+type durableSessionManager interface {
+	CreateWithSecurity(ctx context.Context, userID identity.ID, deviceID *identity.ID, rec identity.SecurityRecord) (identity.IssuedSession, error)
+	RevokeWithSecurity(ctx context.Context, sessionID identity.ID, rec identity.SecurityRecord) error
+	RevokeOthersWithSecurity(ctx context.Context, userID, keepSessionID identity.ID, rec identity.SecurityRecord) error
+}
+
+type durableRegistrar interface {
+	FinishRegistrationWithSecurity(ctx context.Context, in identity.FinishRegistrationInput, rec identity.SecurityRecord) (identity.PasskeyCredential, error)
+}
+
+type durableCredentialGuard interface {
+	RemovePasskeyWithSecurity(ctx context.Context, actorUserID, credentialID identity.ID, rec identity.SecurityRecord) error
+}
+
 type stepUpManager interface {
 	Grant(ctx context.Context, session identity.Session) error
 	Require(ctx context.Context, session identity.Session, op identity.SensitiveOperation) error
@@ -103,6 +117,7 @@ type Handler struct {
 	credentials credentialGuard
 	bootstrap   passkeyBootstrap
 	guard       *AbuseGuard
+	events      identity.SecurityRecorder
 	origins     map[string]struct{}
 }
 
@@ -230,15 +245,34 @@ func (h *Handler) finishPasskeyRegister(w http.ResponseWriter, r *http.Request) 
 	if !h.requirePasskeyAdd(w, r, session) {
 		return
 	}
-	if _, err := h.register.FinishRegistration(r.Context(), identity.FinishRegistrationInput{
+	sec := h.fillSecurity(r, identity.SecurityRecord{
+		Type:      identity.AuthEventPasskeyAdded,
+		UserID:    session.UserID,
+		SessionID: session.ID,
+		Operation: identity.AuthOpPasskeyRegisterFinish,
+		Result:    identity.AuthResultSuccess,
+	})
+	in := identity.FinishRegistrationInput{
 		UserID:   session.UserID,
 		RawToken: req.CeremonyToken,
 		Response: req.Credential,
-	}); err != nil {
+	}
+	var err error
+	if d, ok := h.register.(durableRegistrar); ok {
+		_, err = d.FinishRegistrationWithSecurity(r.Context(), in, sec)
+	} else {
+		_, err = h.register.FinishRegistration(r.Context(), in)
+	}
+	if err != nil {
 		writePasskeyRegisterError(w, err)
 		return
 	}
 	h.bootstrap.Consume(r.Context(), session.ID)
+	if _, ok := h.register.(durableRegistrar); !ok {
+		if !h.recordStateChanging(w, r, sec) {
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, registerFinishResponse{OK: true})
 }
 
@@ -364,6 +398,13 @@ func (h *Handler) finishPasskeyLogin(w http.ResponseWriter, r *http.Request) {
 		Response: req.Credential,
 	})
 	if err != nil {
+		h.recordSecurity(r, identity.SecurityRecord{
+			Type:       identity.AuthEventLoginFailed,
+			AuthMethod: identity.AuthMethodPasskey,
+			Operation:  identity.AuthOpPasskeyLoginFinish,
+			Result:     identity.AuthResultFailed,
+			ReasonCode: identity.ReasonInvalidCredentials,
+		})
 		writeIdentityError(w, err)
 		return
 	}
@@ -373,7 +414,7 @@ func (h *Handler) finishPasskeyLogin(w http.ResponseWriter, r *http.Request) {
 	}, identity.PhaseAccount) {
 		return
 	}
-	h.issueBrowserSession(w, r, userID, true)
+	h.issueBrowserSession(w, r, userID, true, identity.AuthMethodPasskey)
 }
 
 func (h *Handler) passwordLogin(w http.ResponseWriter, r *http.Request) {
@@ -415,6 +456,13 @@ func (h *Handler) passwordLogin(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusServiceUnavailable, "unavailable")
 		case identity.FailureUnauthenticated:
 			h.passwords.DummyVerify(password)
+			h.recordSecurity(r, identity.SecurityRecord{
+				Type:       identity.AuthEventLoginFailed,
+				AuthMethod: identity.AuthMethodPassword,
+				Operation:  identity.AuthOpPasswordLogin,
+				Result:     identity.AuthResultFailed,
+				ReasonCode: identity.ReasonUnknownOrInvalid,
+			})
 			writeError(w, http.StatusUnauthorized, "unauthenticated")
 		default:
 			writeIdentityError(w, err)
@@ -430,10 +478,18 @@ func (h *Handler) passwordLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, err := h.passwords.Verify(r.Context(), user.ID, password); err != nil {
+		h.recordSecurity(r, identity.SecurityRecord{
+			Type:       identity.AuthEventLoginFailed,
+			UserID:     user.ID,
+			AuthMethod: identity.AuthMethodPassword,
+			Operation:  identity.AuthOpPasswordLogin,
+			Result:     identity.AuthResultFailed,
+			ReasonCode: identity.ReasonInvalidCredentials,
+		})
 		writeIdentityError(w, err)
 		return
 	}
-	h.issueBrowserSession(w, r, user.ID, false)
+	h.issueBrowserSession(w, r, user.ID, false, identity.AuthMethodPassword)
 }
 
 func kindIsSupported(kind identity.IdentifierKind) bool {
@@ -573,7 +629,13 @@ func (h *Handler) completeSignup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "unavailable")
 		return
 	}
-	issued, ok := h.createFreshSession(w, r, got.UserID)
+	issued, ok := h.createFreshSession(w, r, got.UserID, h.fillSecurity(r, identity.SecurityRecord{
+		Type:       identity.AuthEventLoginSuccess,
+		UserID:     got.UserID,
+		AuthMethod: identity.AuthMethodSignup,
+		Operation:  identity.AuthOpSignupComplete,
+		Result:     identity.AuthResultSuccess,
+	}))
 	if !ok {
 		return
 	}
@@ -718,8 +780,14 @@ func (h *Handler) completePasswordReset(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, resetCompleteResponse{OK: true})
 }
 
-func (h *Handler) issueBrowserSession(w http.ResponseWriter, r *http.Request, userID identity.ID, strong bool) {
-	issued, ok := h.createFreshSession(w, r, userID)
+func (h *Handler) issueBrowserSession(w http.ResponseWriter, r *http.Request, userID identity.ID, strong bool, method string) {
+	rec := h.fillSecurity(r, identity.SecurityRecord{
+		Type:       identity.AuthEventLoginSuccess,
+		UserID:     userID,
+		AuthMethod: method,
+		Result:     identity.AuthResultSuccess,
+	})
+	issued, ok := h.createFreshSession(w, r, userID, rec)
 	if !ok {
 		return
 	}
@@ -729,11 +797,18 @@ func (h *Handler) issueBrowserSession(w http.ResponseWriter, r *http.Request, us
 	h.writeIssuedSession(w, issued, userID)
 }
 
-func (h *Handler) createFreshSession(w http.ResponseWriter, r *http.Request, userID identity.ID) (identity.IssuedSession, bool) {
+func (h *Handler) createFreshSession(w http.ResponseWriter, r *http.Request, userID identity.ID, rec identity.SecurityRecord) (identity.IssuedSession, bool) {
 	if !h.rotatePredecessor(w, r) {
 		return identity.IssuedSession{}, false
 	}
-	issued, err := h.sessions.Create(r.Context(), userID, nil)
+	var issued identity.IssuedSession
+	var err error
+	durable, ok := h.sessions.(durableSessionManager)
+	if ok && rec.Type != "" {
+		issued, err = durable.CreateWithSecurity(r.Context(), userID, nil, rec)
+	} else {
+		issued, err = h.sessions.Create(r.Context(), userID, nil)
+	}
 	if err != nil {
 		writeIdentityError(w, err)
 		return identity.IssuedSession{}, false
@@ -741,6 +816,18 @@ func (h *Handler) createFreshSession(w http.ResponseWriter, r *http.Request, use
 	if issued.RawToken == "" {
 		writeError(w, http.StatusInternalServerError, "internal")
 		return identity.IssuedSession{}, false
+	}
+	if rec.Type != "" && !ok {
+		if rec.SessionID.IsZero() {
+			rec.SessionID = issued.Session.ID
+		}
+		if rec.UserID.IsZero() {
+			rec.UserID = userID
+		}
+		if !h.recordStateChanging(w, r, rec) {
+			_ = h.sessions.Revoke(r.Context(), issued.Session.ID)
+			return identity.IssuedSession{}, false
+		}
 	}
 	return issued, true
 }
@@ -834,13 +921,31 @@ func (h *Handler) revokeOtherSessions(w http.ResponseWriter, r *http.Request) {
 		writeIdentityError(w, err)
 		return
 	}
-	if err := h.sessions.RevokeOthers(r.Context(), session.UserID, session.ID); err != nil {
-		writeIdentityError(w, err)
+	sec := h.fillSecurity(r, identity.SecurityRecord{
+		Type:      identity.AuthEventSessionsRevokedOthers,
+		UserID:    session.UserID,
+		SessionID: session.ID,
+		Operation: identity.AuthOpSessionRevoke,
+		Result:    identity.AuthResultSuccess,
+	})
+	var errRevoke error
+	if d, ok := h.sessions.(durableSessionManager); ok {
+		errRevoke = d.RevokeOthersWithSecurity(r.Context(), session.UserID, session.ID, sec)
+	} else {
+		errRevoke = h.sessions.RevokeOthers(r.Context(), session.UserID, session.ID)
+	}
+	if errRevoke != nil {
+		writeIdentityError(w, errRevoke)
 		return
 	}
 	for _, s := range others {
 		if s.ID != session.ID {
 			h.clearElevations(r.Context(), s.ID)
+		}
+	}
+	if _, ok := h.sessions.(durableSessionManager); !ok {
+		if !h.recordStateChanging(w, r, sec) {
+			return
 		}
 	}
 	writeJSON(w, http.StatusOK, logoutResponse{OK: true})
@@ -868,14 +973,32 @@ func (h *Handler) revokeSession(w http.ResponseWriter, r *http.Request) {
 		writeSecurityError(w, err)
 		return
 	}
-	if err := h.sessions.Revoke(r.Context(), owned.ID); err != nil {
-		writeIdentityError(w, err)
+	sec := h.fillSecurity(r, identity.SecurityRecord{
+		Type:      identity.AuthEventSessionRevoked,
+		UserID:    session.UserID,
+		SessionID: owned.ID,
+		Operation: identity.AuthOpSessionRevoke,
+		Result:    identity.AuthResultSuccess,
+	})
+	var errRevoke error
+	if d, ok := h.sessions.(durableSessionManager); ok {
+		errRevoke = d.RevokeWithSecurity(r.Context(), owned.ID, sec)
+	} else {
+		errRevoke = h.sessions.Revoke(r.Context(), owned.ID)
+	}
+	if errRevoke != nil {
+		writeIdentityError(w, errRevoke)
 		return
 	}
 	h.clearElevations(r.Context(), owned.ID)
 	if owned.ID == session.ID {
 		clearSessionCookie(w)
 		clearCSRFCookie(w)
+	}
+	if _, ok := h.sessions.(durableSessionManager); !ok {
+		if !h.recordStateChanging(w, r, sec) {
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, logoutResponse{OK: true})
 }
@@ -926,13 +1049,30 @@ func (h *Handler) removePasskey(w http.ResponseWriter, r *http.Request) {
 	if !h.requireRecentStrong(w, r, session, identity.SensitivePasskeyRemove) {
 		return
 	}
-	if err := h.credentials.RemovePasskey(r.Context(), session.UserID, credID); err != nil {
+	sec := h.fillSecurity(r, identity.SecurityRecord{
+		Type:      identity.AuthEventPasskeyRemoved,
+		UserID:    session.UserID,
+		SessionID: session.ID,
+		Operation: identity.AuthOpPasskeyRemove,
+		Result:    identity.AuthResultSuccess,
+	})
+	if d, ok := h.credentials.(durableCredentialGuard); ok {
+		err = d.RemovePasskeyWithSecurity(r.Context(), session.UserID, credID, sec)
+	} else {
+		err = h.credentials.RemovePasskey(r.Context(), session.UserID, credID)
+	}
+	if err != nil {
 		writeSecurityError(w, err)
 		return
 	}
 	h.clearElevations(r.Context(), session.ID)
 	clearSessionCookie(w)
 	clearCSRFCookie(w)
+	if _, ok := h.credentials.(durableCredentialGuard); !ok {
+		if !h.recordStateChanging(w, r, sec) {
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, logoutResponse{OK: true})
 }
 
@@ -997,10 +1137,31 @@ func (h *Handler) finishStepUp(w http.ResponseWriter, r *http.Request) {
 		RawToken: req.CeremonyToken,
 		Response: req.Credential,
 	}); err != nil {
+		h.recordSecurity(r, identity.SecurityRecord{
+			Type:      identity.AuthEventStepUpFailed,
+			UserID:    session.UserID,
+			SessionID: session.ID,
+			Operation: identity.AuthOpStepUpFinish,
+			Result:    identity.AuthResultFailed,
+			ReasonCode: identity.ReasonInvalidCredentials,
+		})
 		writeIdentityError(w, err)
 		return
 	}
-	issued, err := h.sessions.Create(r.Context(), session.UserID, nil)
+	sec := h.fillSecurity(r, identity.SecurityRecord{
+		Type:       identity.AuthEventStepUpSuccess,
+		UserID:     session.UserID,
+		AuthMethod: identity.AuthMethodPasskey,
+		Operation:  identity.AuthOpStepUpFinish,
+		Result:     identity.AuthResultSuccess,
+	})
+	var issued identity.IssuedSession
+	var err error
+	if d, ok := h.sessions.(durableSessionManager); ok {
+		issued, err = d.CreateWithSecurity(r.Context(), session.UserID, nil, sec)
+	} else {
+		issued, err = h.sessions.Create(r.Context(), session.UserID, nil)
+	}
 	if err != nil {
 		writeIdentityError(w, err)
 		return
@@ -1024,6 +1185,12 @@ func (h *Handler) finishStepUp(w http.ResponseWriter, r *http.Request) {
 	}
 	setSessionCookie(w, issued.RawToken)
 	setCSRFCookie(w, csrf)
+	if _, ok := h.sessions.(durableSessionManager); !ok {
+		sec.SessionID = issued.Session.ID
+		if !h.recordStateChanging(w, r, sec) {
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, logoutResponse{OK: true})
 }
 
@@ -1042,9 +1209,26 @@ func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			h.clearElevations(r.Context(), session.ID)
-			if err := h.sessions.Revoke(r.Context(), session.ID); err != nil {
-				writeIdentityError(w, err)
+			sec := h.fillSecurity(r, identity.SecurityRecord{
+				Type:      identity.AuthEventLogout,
+				UserID:    session.UserID,
+				SessionID: session.ID,
+				Result:    identity.AuthResultSuccess,
+			})
+			var rerr error
+			if d, ok := h.sessions.(durableSessionManager); ok {
+				rerr = d.RevokeWithSecurity(r.Context(), session.ID, sec)
+			} else {
+				rerr = h.sessions.Revoke(r.Context(), session.ID)
+			}
+			if rerr != nil {
+				writeIdentityError(w, rerr)
 				return
+			}
+			if _, ok := h.sessions.(durableSessionManager); !ok {
+				if !h.recordStateChanging(w, r, sec) {
+					return
+				}
 			}
 		case identity.FailureUnavailable:
 			writeIdentityError(w, err)
@@ -1120,6 +1304,7 @@ func (h *Handler) protect(w http.ResponseWriter, r *http.Request, sub identity.A
 	sub.Hostname = requestHostname(r)
 	out := h.guard.evaluate(r.Context(), sub, phase)
 	logAuthRisk(r.Context(), out)
+	h.recordRisk(r, sub, out)
 	return writeRisk(w, out)
 }
 

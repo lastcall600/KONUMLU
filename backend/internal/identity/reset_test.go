@@ -259,6 +259,48 @@ func TestCompletePasswordResetValkeyFailureDoesNotUndo(t *testing.T) {
 	}
 }
 
+func TestCompletePasswordResetSecurityEventFailureRollsBack(t *testing.T) {
+	ctx := context.Background()
+	svc, sessions, world, _, user := newTestPasswordResetComplete(t)
+	oldPass := []byte("keep-me-security")
+	if err := svc.passwords.Set(ctx, user.ID, oldPass); err != nil {
+		t.Fatal(err)
+	}
+	issued, err := sessions.Create(ctx, user.ID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawProof := issueResetProofFor(t, svc, user, "security-event-fail@example.com")
+	intents := svc.intents.(*memIntentEnqueuer)
+	intents.failType = AuthSecurityEventType
+	if _, err := svc.CompletePasswordReset(ctx, CompletePasswordResetInput{ResetProof: rawProof, NewPassword: []byte("should-not-stick")}); !errors.Is(err, errUnavailable) {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := svc.passwords.Verify(ctx, user.ID, oldPass); err != nil {
+		t.Fatalf("old password must remain valid: %v", err)
+	}
+	if world.mustSession(t, issued.Session.ID).RevokedAt != nil {
+		t.Fatal("session revoke must roll back when required security event fails")
+	}
+	if world.users[user.ID].SessionEpoch != 0 {
+		t.Fatalf("session_epoch = %d, want 0", world.users[user.ID].SessionEpoch)
+	}
+	var consumed bool
+	for _, p := range world.resetProofs {
+		if p.ConsumedAt != nil {
+			consumed = true
+		}
+	}
+	if consumed {
+		t.Fatal("proof consume must roll back")
+	}
+	for _, ev := range intents.committed {
+		if ev.EventType == AuthSecurityEventType {
+			t.Fatal("failed security event must not persist")
+		}
+	}
+}
+
 func TestCompletePasswordResetDBFailureRollsBack(t *testing.T) {
 	ctx := context.Background()
 	svc, sessions, world, _, user := newTestPasswordResetComplete(t)
