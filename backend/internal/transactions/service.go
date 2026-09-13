@@ -9,6 +9,7 @@ import (
 	offercontracts "backend/internal/offers/contracts"
 	"backend/internal/platform/db"
 	"backend/internal/platform/outbox"
+	txncontracts "backend/internal/transactions/contracts"
 )
 
 type completionEnqueuer interface {
@@ -89,15 +90,21 @@ func (s *Service) CreateFromAcceptedOffer(ctx context.Context, requesterUserID, 
 	if err != nil {
 		return Transaction{}, err
 	}
-	if err := s.store.Create(ctx, txn); err != nil {
-		if errors.Is(mapStoreErr(err), errConflict) {
+	commit := func(ctx context.Context) error {
+		if err := s.store.Create(ctx, txn); err != nil {
+			return mapStoreErr(err)
+		}
+		return s.enqueueLifecycle(ctx, txncontracts.EventTypeCreated, "created", txn, requesterUserID)
+	}
+	if err := s.runMaybeTx(ctx, commit); err != nil {
+		if errors.Is(err, errConflict) {
 			existing, findErr := s.store.GetByOfferID(ctx, ID(offer.ID))
 			if findErr == nil {
 				return existing, nil
 			}
 			return Transaction{}, errConflict
 		}
-		return Transaction{}, mapStoreErr(err)
+		return Transaction{}, err
 	}
 	return txn, nil
 }
@@ -138,7 +145,7 @@ func (s *Service) Start(ctx context.Context, userID, transactionID ID) (Transact
 			}
 		}
 		return txn.Start(now)
-	}, false)
+	}, "")
 }
 
 func (s *Service) Complete(ctx context.Context, userID, transactionID ID) (Transaction, error) {
@@ -149,16 +156,16 @@ func (s *Service) Complete(ctx context.Context, userID, transactionID ID) (Trans
 			}
 		}
 		return txn.Complete(now)
-	}, true)
+	}, "completed")
 }
 
 func (s *Service) Cancel(ctx context.Context, userID, transactionID ID) (Transaction, error) {
 	return s.apply(ctx, userID, transactionID, func(txn Transaction, now time.Time) (Transaction, bool, error) {
 		return txn.Cancel(now)
-	}, false)
+	}, "cancelled")
 }
 
-func (s *Service) apply(ctx context.Context, userID, transactionID ID, fn func(Transaction, time.Time) (Transaction, bool, error), emitCompleted bool) (Transaction, error) {
+func (s *Service) apply(ctx context.Context, userID, transactionID ID, fn func(Transaction, time.Time) (Transaction, bool, error), emit string) (Transaction, error) {
 	current, err := s.Get(ctx, userID, transactionID)
 	if err != nil {
 		return Transaction{}, err
@@ -174,10 +181,17 @@ func (s *Service) apply(ctx context.Context, userID, transactionID ID, fn func(T
 		if err := s.store.Update(ctx, next, current.UpdatedAt); err != nil {
 			return mapStoreErr(err)
 		}
-		if !emitCompleted {
+		if emit == "" {
 			return nil
 		}
-		return s.enqueueCompleted(ctx, next)
+		switch emit {
+		case "completed":
+			return s.enqueueCompleted(ctx, next, userID)
+		case "cancelled":
+			return s.enqueueLifecycle(ctx, txncontracts.EventTypeCancelled, "cancelled", next, userID)
+		default:
+			return nil
+		}
 	}
 	if err := s.runMaybeTx(ctx, commit); err != nil {
 		if !errors.Is(err, errConflict) {
@@ -199,11 +213,28 @@ func (s *Service) apply(ctx context.Context, userID, transactionID ID, fn func(T
 	return next, nil
 }
 
-func (s *Service) enqueueCompleted(ctx context.Context, txn Transaction) error {
+func (s *Service) enqueueCompleted(ctx context.Context, txn Transaction, actorUserID ID) error {
 	if s == nil || s.outbox == nil {
 		return nil
 	}
-	ev, err := encodeCompletedEvent(txn)
+	ev, err := encodeCompletedEvent(txn, actorUserID)
+	if err != nil {
+		return err
+	}
+	if _, err := s.outbox.Enqueue(ctx, nil, ev); err != nil {
+		if errors.Is(err, outbox.ErrConflict) {
+			return nil
+		}
+		return mapStoreErr(err)
+	}
+	return nil
+}
+
+func (s *Service) enqueueLifecycle(ctx context.Context, eventType, status string, txn Transaction, actorUserID ID) error {
+	if s == nil || s.outbox == nil {
+		return nil
+	}
+	ev, err := encodeLifecycleEvent(eventType, status, txn, actorUserID)
 	if err != nil {
 		return err
 	}

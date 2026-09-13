@@ -244,9 +244,13 @@ type ChannelDeliveryRow struct {
 	Channel           policy.Channel
 	State             policy.DeliveryState
 	Attempts          int
+	NextAttemptAt     *time.Time
 	SuppressionReason *policy.SuppressionReason
+	LastErrorClass    *string
+	ProviderRef       *string
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
+	CompletedAt       *time.Time
 }
 
 type InboxRow struct {
@@ -331,11 +335,11 @@ func (p *PostgresStore) insertChannelDeliveryTx(ctx context.Context, q sqlQuerie
 	}
 	scanned := q.QueryRow(ctx, `
 		INSERT INTO notifications.channel_deliveries (
-			id, intent_id, channel, state, attempts, suppression_reason, created_at, updated_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+			id, intent_id, channel, state, attempts, next_attempt_at, suppression_reason, created_at, updated_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
 		ON CONFLICT (intent_id, channel) DO NOTHING
 		RETURNING id, intent_id, channel, state, attempts, suppression_reason, created_at, updated_at`,
-		row.ID, row.IntentID, string(row.Channel), string(row.State), row.Attempts, reason, row.CreatedAt.UTC(), row.UpdatedAt.UTC())
+		row.ID, row.IntentID, string(row.Channel), string(row.State), row.Attempts, row.NextAttemptAt, reason, row.CreatedAt.UTC(), row.UpdatedAt.UTC())
 	got, err := scanChannelDelivery(scanned)
 	if err == nil {
 		return got, nil
@@ -542,7 +546,7 @@ func (p *PostgresStore) ListChannelDeliveries(ctx context.Context, intentID ID) 
 		return nil, errUnavailable
 	}
 	rows, err := p.db.Query(ctx, `
-		SELECT id, intent_id, channel, state, attempts, suppression_reason, created_at, updated_at
+		SELECT `+channelDeliverySelect+`
 		FROM notifications.channel_deliveries WHERE intent_id = $1 ORDER BY channel`, intentID)
 	if err != nil {
 		return nil, mapPolicyDBErr(err)
@@ -550,7 +554,7 @@ func (p *PostgresStore) ListChannelDeliveries(ctx context.Context, intentID ID) 
 	defer rows.Close()
 	out := make([]ChannelDeliveryRow, 0)
 	for rows.Next() {
-		d, err := scanChannelDelivery(rows)
+		d, err := scanChannelDeliveryFull(rows)
 		if err != nil {
 			return nil, err
 		}

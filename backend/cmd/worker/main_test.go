@@ -44,7 +44,7 @@ func TestRunRequiresConfig(t *testing.T) {
 func TestNewHandlerRegistryRegistersIntentHandler(t *testing.T) {
 	store := notifications.NewMemoryStore()
 	delivery := mustTestDelivery(t, store)
-	reg, err := newHandlerRegistry(store, delivery, mustTestMediaHandler(t), mustTestSearchHandler(t), mustTestTrustHandler(t), mustTestReviewAggregatesHandler(t), mustTestCompletionHandler(t), noopNotifySecurity())
+	reg, err := newHandlerRegistry(store, delivery, mustTestMediaHandler(t), mustTestSearchHandler(t), mustTestTrustHandler(t), mustTestReviewAggregatesHandler(t), mustTestCompletionHandler(t), noopNotifySecurity(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,6 +80,13 @@ func TestNewHandlerRegistryRegistersIntentHandler(t *testing.T) {
 	}
 	if _, ok := reg.Lookup(identity.AuthSecurityEventType, identity.AuthSecurityEventVersion); !ok {
 		t.Fatal("cmd/worker must register identity.auth.security v1")
+	}
+	reg2, err := newHandlerRegistry(store, delivery, mustTestMediaHandler(t), mustTestSearchHandler(t), mustTestTrustHandler(t), mustTestReviewAggregatesHandler(t), mustTestCompletionHandler(t), noopNotifySecurity(), noopNotifySecurity())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := reg2.Lookup("messaging.message.received", 1); !ok {
+		t.Fatal("cmd/worker must register messaging.message.received v1")
 	}
 	if _, ok := reg.Lookup(contracts.IntentEventType, 2); ok {
 		t.Fatal("unknown version must not be registered")

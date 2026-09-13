@@ -11,7 +11,7 @@ import (
 
 const transactionAggregateType = "transaction"
 
-func encodeCompletedEvent(txn Transaction) (outbox.NewEvent, error) {
+func encodeCompletedEvent(txn Transaction, actorUserID ID) (outbox.NewEvent, error) {
 	if txn.CompletedAt == nil {
 		return outbox.NewEvent{}, errInvalidTxn
 	}
@@ -20,6 +20,8 @@ func encodeCompletedEvent(txn Transaction) (outbox.NewEvent, error) {
 		OfferID:         txn.OfferID.String(),
 		NeedID:          txn.NeedID.String(),
 		RequesterUserID: txn.RequesterUserID.String(),
+		ProviderUserID:  txn.ProviderUserID.String(),
+		ActorUserID:     actorUserID.String(),
 		CompletedAt:     txn.CompletedAt.UTC().Format(time.RFC3339),
 	})
 	if err != nil {
@@ -32,5 +34,31 @@ func encodeCompletedEvent(txn Transaction) (outbox.NewEvent, error) {
 		AggregateID:    txn.ID.String(),
 		Payload:        payload,
 		IdempotencyKey: fmt.Sprintf("%s:%s", txncontracts.EventTypeCompleted, txn.ID.String()),
+	}, nil
+}
+
+func encodeLifecycleEvent(eventType, status string, txn Transaction, actorUserID ID) (outbox.NewEvent, error) {
+	if txn.ID.IsZero() || actorUserID.IsZero() {
+		return outbox.NewEvent{}, errInvalidTxn
+	}
+	payload, err := json.Marshal(txncontracts.LifecyclePayload{
+		TransactionID:   txn.ID.String(),
+		OfferID:         txn.OfferID.String(),
+		NeedID:          txn.NeedID.String(),
+		RequesterUserID: txn.RequesterUserID.String(),
+		ProviderUserID:  txn.ProviderUserID.String(),
+		ActorUserID:     actorUserID.String(),
+		StatusCode:      status,
+	})
+	if err != nil {
+		return outbox.NewEvent{}, errUnavailable
+	}
+	return outbox.NewEvent{
+		EventType:      eventType,
+		EventVersion:   txncontracts.EventVersion,
+		AggregateType:  transactionAggregateType,
+		AggregateID:    txn.ID.String(),
+		Payload:        payload,
+		IdempotencyKey: fmt.Sprintf("%s:%s:%s", eventType, txn.ID.String(), status),
 	}, nil
 }

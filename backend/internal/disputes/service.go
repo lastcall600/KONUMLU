@@ -7,8 +7,13 @@ import (
 
 	delcontracts "backend/internal/deliveries/contracts"
 	"backend/internal/platform/db"
+	"backend/internal/platform/outbox"
 	txncontracts "backend/internal/transactions/contracts"
 )
+
+type notifyEnqueuer interface {
+	Enqueue(ctx context.Context, exec outbox.Execer, in outbox.NewEvent) (outbox.Event, error)
+}
 
 type Service struct {
 	store      store
@@ -16,6 +21,8 @@ type Service struct {
 	deliveries delcontracts.Lookup
 	policy     Policy
 	now        func() time.Time
+	tx         Transactor
+	outbox     notifyEnqueuer
 }
 
 func NewService(store store, txns txncontracts.Lookup, deliveries delcontracts.Lookup, policy Policy, now func() time.Time) (*Service, error) {
@@ -33,6 +40,14 @@ func NewService(store store, txns txncontracts.Lookup, deliveries delcontracts.L
 		now = func() time.Time { return time.Now().UTC() }
 	}
 	return &Service{store: store, txns: txns, deliveries: deliveries, policy: normalized, now: now}, nil
+}
+
+func (s *Service) SetOutbox(tx Transactor, enqueuer notifyEnqueuer) {
+	if s == nil {
+		return
+	}
+	s.tx = tx
+	s.outbox = enqueuer
 }
 
 type CreateInput struct {
@@ -91,15 +106,21 @@ func (s *Service) CreateForTransaction(ctx context.Context, actorUserID, transac
 	if err != nil {
 		return Dispute{}, err
 	}
-	if err := s.store.Create(ctx, created); err != nil {
-		if errors.Is(mapStoreErr(err), errConflict) {
+	commit := func(ctx context.Context) error {
+		if err := s.store.Create(ctx, created); err != nil {
+			return mapStoreErr(err)
+		}
+		return s.enqueueUpdated(ctx, created, actorUserID)
+	}
+	if err := s.runMaybeTx(ctx, commit); err != nil {
+		if errors.Is(err, errConflict) {
 			existing, findErr := s.store.GetActiveByTransactionID(ctx, transactionID)
 			if findErr == nil {
 				return existing, nil
 			}
 			return Dispute{}, errConflict
 		}
-		return Dispute{}, mapStoreErr(err)
+		return Dispute{}, err
 	}
 	return created, nil
 }
@@ -144,7 +165,7 @@ func (s *Service) StartReview(ctx context.Context, disputeID ID) (Dispute, error
 	if err != nil {
 		return Dispute{}, err
 	}
-	return s.apply(ctx, current, func(d Dispute, now time.Time) (Dispute, bool, error) {
+	return s.apply(ctx, current, ID{}, func(d Dispute, now time.Time) (Dispute, bool, error) {
 		return d.StartReview(now)
 	})
 }
@@ -154,7 +175,7 @@ func (s *Service) Resolve(ctx context.Context, disputeID ID, code ResolutionCode
 	if err != nil {
 		return Dispute{}, err
 	}
-	return s.apply(ctx, current, func(d Dispute, now time.Time) (Dispute, bool, error) {
+	return s.apply(ctx, current, ID{}, func(d Dispute, now time.Time) (Dispute, bool, error) {
 		return d.Resolve(code, now)
 	})
 }
@@ -164,7 +185,7 @@ func (s *Service) Close(ctx context.Context, disputeID ID) (Dispute, error) {
 	if err != nil {
 		return Dispute{}, err
 	}
-	return s.apply(ctx, current, func(d Dispute, now time.Time) (Dispute, bool, error) {
+	return s.apply(ctx, current, ID{}, func(d Dispute, now time.Time) (Dispute, bool, error) {
 		return d.Close(now)
 	})
 }
@@ -258,7 +279,7 @@ func (s *Service) applyParticipant(ctx context.Context, actorUserID, disputeID I
 	if err != nil {
 		return Dispute{}, err
 	}
-	return s.apply(ctx, current, fn)
+	return s.apply(ctx, current, actorUserID, fn)
 }
 
 func (s *Service) authorizeParticipant(ctx context.Context, actorUserID, disputeID ID) (Dispute, error) {
@@ -272,7 +293,7 @@ func (s *Service) authorizeParticipant(ctx context.Context, actorUserID, dispute
 	return current, nil
 }
 
-func (s *Service) apply(ctx context.Context, current Dispute, fn func(Dispute, time.Time) (Dispute, bool, error)) (Dispute, error) {
+func (s *Service) apply(ctx context.Context, current Dispute, actorUserID ID, fn func(Dispute, time.Time) (Dispute, bool, error)) (Dispute, error) {
 	next, changed, err := fn(current, s.now().UTC())
 	if err != nil {
 		return Dispute{}, err
@@ -280,9 +301,15 @@ func (s *Service) apply(ctx context.Context, current Dispute, fn func(Dispute, t
 	if !changed {
 		return current, nil
 	}
-	if err := s.store.Update(ctx, next, current.UpdatedAt); err != nil {
-		if !errors.Is(mapStoreErr(err), errConflict) {
-			return Dispute{}, mapStoreErr(err)
+	commit := func(ctx context.Context) error {
+		if err := s.store.Update(ctx, next, current.UpdatedAt); err != nil {
+			return mapStoreErr(err)
+		}
+		return s.enqueueUpdated(ctx, next, actorUserID)
+	}
+	if err := s.runMaybeTx(ctx, commit); err != nil {
+		if !errors.Is(err, errConflict) {
+			return Dispute{}, err
 		}
 		latest, getErr := s.get(ctx, current.ID)
 		if getErr != nil {
@@ -298,6 +325,41 @@ func (s *Service) apply(ctx context.Context, current Dispute, fn func(Dispute, t
 		return Dispute{}, errConflict
 	}
 	return next, nil
+}
+
+func (s *Service) enqueueUpdated(ctx context.Context, d Dispute, actorUserID ID) error {
+	if s == nil || s.outbox == nil {
+		return nil
+	}
+	ev, err := encodeUpdated(d, actorUserID)
+	if err != nil {
+		return err
+	}
+	if _, err := s.outbox.Enqueue(ctx, nil, ev); err != nil {
+		if errors.Is(err, outbox.ErrConflict) {
+			return nil
+		}
+		return mapStoreErr(err)
+	}
+	return nil
+}
+
+func (s *Service) runMaybeTx(ctx context.Context, fn func(context.Context) error) error {
+	if s.outbox != nil && s.tx != nil && db.TxFrom(ctx) == nil {
+		tx, err := s.tx.Begin(ctx)
+		if err != nil {
+			return mapStoreErr(err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		if err := fn(tx.Context(ctx)); err != nil {
+			return err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return mapStoreErr(err)
+		}
+		return nil
+	}
+	return fn(ctx)
 }
 
 func (s *Service) get(ctx context.Context, id ID) (Dispute, error) {
@@ -385,6 +447,10 @@ func mapStoreErr(err error) error {
 		errors.Is(err, errForbidden) || errors.Is(err, errNotEligible) ||
 		errors.Is(err, errConcluded) || errors.Is(err, errWindowClosed) {
 		return err
+	}
+	if errors.Is(err, outbox.ErrUnavailable) || errors.Is(err, outbox.ErrInvalidEvent) ||
+		errors.Is(err, outbox.ErrSensitivePayload) {
+		return errUnavailable
 	}
 	return errUnavailable
 }

@@ -114,18 +114,31 @@ func (p *PostgresStore) InsertMessage(ctx context.Context, msg Message, conversa
 	if err := msg.Validate(); err != nil {
 		return err
 	}
+	if db.TxFrom(ctx) != nil {
+		return p.insertMessage(ctx, msg, conversationUpdatedAt)
+	}
 	tx, err := p.db.Begin(ctx)
 	if err != nil {
 		return mapDBErr(err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err := tx.Exec(ctx, `
+	if err := p.insertMessage(db.WithTx(ctx, tx), msg, conversationUpdatedAt); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return mapDBErr(err)
+	}
+	return nil
+}
+
+func (p *PostgresStore) insertMessage(ctx context.Context, msg Message, conversationUpdatedAt time.Time) error {
+	if _, err := p.db.Exec(ctx, `
 		INSERT INTO messaging.messages (id, conversation_id, sender_user_id, body, created_at)
 		VALUES ($1, $2, $3, $4, $5)`,
 		msg.ID, msg.ConversationID, msg.SenderUserID, msg.Body, msg.CreatedAt.UTC()); err != nil {
 		return mapDBErr(err)
 	}
-	n, err := tx.Exec(ctx, `
+	n, err := p.db.Exec(ctx, `
 		UPDATE messaging.conversations
 		SET updated_at = $2
 		WHERE id = $1`, msg.ConversationID, conversationUpdatedAt.UTC())
@@ -134,9 +147,6 @@ func (p *PostgresStore) InsertMessage(ctx context.Context, msg Message, conversa
 	}
 	if n == 0 {
 		return errNotFound
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return mapDBErr(err)
 	}
 	return nil
 }

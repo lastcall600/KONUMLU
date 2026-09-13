@@ -6,12 +6,20 @@ import (
 	"time"
 
 	listingcontracts "backend/internal/listings/contracts"
+	"backend/internal/platform/db"
+	"backend/internal/platform/outbox"
 )
+
+type notifyEnqueuer interface {
+	Enqueue(ctx context.Context, exec outbox.Execer, in outbox.NewEvent) (outbox.Event, error)
+}
 
 type Service struct {
 	store    conversationStore
 	listings listingcontracts.Ownership
 	now      func() time.Time
+	tx       Transactor
+	outbox   notifyEnqueuer
 }
 
 func NewService(store conversationStore, listings listingcontracts.Ownership, now func() time.Time) (*Service, error) {
@@ -25,6 +33,15 @@ func NewService(store conversationStore, listings listingcontracts.Ownership, no
 		now = func() time.Time { return time.Now().UTC() }
 	}
 	return &Service{store: store, listings: listings, now: now}, nil
+}
+
+// SetOutbox writes messaging.message.received in the same transaction as the message row.
+func (s *Service) SetOutbox(tx Transactor, enqueuer notifyEnqueuer) {
+	if s == nil {
+		return
+	}
+	s.tx = tx
+	s.outbox = enqueuer
 }
 
 func (s *Service) CreateConversation(ctx context.Context, buyerID, listingID ID) (Conversation, error) {
@@ -156,14 +173,59 @@ func (s *Service) SendMessage(ctx context.Context, userID, conversationID ID, ra
 	if err := msg.Validate(); err != nil {
 		return Message{}, err
 	}
-	if err := s.store.InsertMessage(ctx, msg, now); err != nil {
-		return Message{}, mapStoreErr(err)
+	commit := func(ctx context.Context) error {
+		if err := s.store.InsertMessage(ctx, msg, now); err != nil {
+			return mapStoreErr(err)
+		}
+		if err := s.enqueueReceived(ctx, conv, msg); err != nil {
+			return err
+		}
+		lastID := msg.ID
+		return mapStoreErr(s.store.MarkRead(ctx, conv.ID, userID, &lastID, now))
 	}
-	lastID := msg.ID
-	if err := s.store.MarkRead(ctx, conv.ID, userID, &lastID, now); err != nil {
-		return Message{}, mapStoreErr(err)
+	if err := s.runMaybeTx(ctx, commit); err != nil {
+		return Message{}, err
 	}
 	return msg, nil
+}
+
+func (s *Service) enqueueReceived(ctx context.Context, conv Conversation, msg Message) error {
+	if s == nil || s.outbox == nil {
+		return nil
+	}
+	recipient := conv.Counterpart(msg.SenderUserID)
+	if recipient.IsZero() {
+		return nil
+	}
+	ev, err := encodeMessageReceived(msg, recipient)
+	if err != nil {
+		return errUnavailable
+	}
+	if _, err := s.outbox.Enqueue(ctx, nil, ev); err != nil {
+		if errors.Is(err, outbox.ErrConflict) {
+			return nil
+		}
+		return mapStoreErr(err)
+	}
+	return nil
+}
+
+func (s *Service) runMaybeTx(ctx context.Context, fn func(context.Context) error) error {
+	if s.outbox != nil && s.tx != nil && db.TxFrom(ctx) == nil {
+		tx, err := s.tx.Begin(ctx)
+		if err != nil {
+			return mapStoreErr(err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		if err := fn(tx.Context(ctx)); err != nil {
+			return err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return mapStoreErr(err)
+		}
+		return nil
+	}
+	return fn(ctx)
 }
 
 func (s *Service) MarkRead(ctx context.Context, userID, conversationID ID) error {
@@ -290,6 +352,10 @@ func mapStoreErr(err error) error {
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return err
+	}
+	if errors.Is(err, outbox.ErrUnavailable) || errors.Is(err, outbox.ErrInvalidEvent) ||
+		errors.Is(err, outbox.ErrSensitivePayload) {
+		return errUnavailable
 	}
 	return errUnavailable
 }
