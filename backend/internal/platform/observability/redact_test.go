@@ -113,6 +113,7 @@ func TestStructuredLoggerRedactsSensitiveKeysWithoutDroppingIDs(t *testing.T) {
 		"signupProof", "raw-signup-proof-zzzz",
 		"resetProof", "raw-reset-proof-yyyy",
 		"challengeToken", "raw-challenge-token-xxxx",
+		"turnstile_secret", "turnstile-secret-must-not-leak",
 		"ceremonyToken", "raw-ceremony-secret-wwww",
 		"step_up", "raw-step-up-vvvv",
 		"webauthn_challenge", "raw-webauthn-uuuu",
@@ -141,7 +142,7 @@ func TestStructuredLoggerRedactsSensitiveKeysWithoutDroppingIDs(t *testing.T) {
 	if row["authorization"] != Redacted || row["otp"] != Redacted || row["email"] != Redacted {
 		t.Fatalf("expected redacted keys: %#v", row)
 	}
-	if row["signupProof"] != Redacted || row["resetProof"] != Redacted || row["challengeToken"] != Redacted || row["provider_secret"] != Redacted {
+	if row["signupProof"] != Redacted || row["resetProof"] != Redacted || row["challengeToken"] != Redacted || row["provider_secret"] != Redacted || row["turnstile_secret"] != Redacted {
 		t.Fatalf("expected redacted identity proofs: %#v", row)
 	}
 	if row["ceremonyToken"] != Redacted || row["step_up"] != Redacted || row["webauthn_challenge"] != Redacted {
@@ -236,6 +237,7 @@ func assertNoLeak(t *testing.T, out string) {
 		synthBearer, synthSession, synthCSRF, synthOTP, synthQR,
 		synthPhone, synthEmail, synthProvider, synthTCKN,
 		"raw-signup-proof-zzzz", "raw-reset-proof-yyyy", "raw-challenge-token-xxxx",
+		"turnstile-secret-must-not-leak",
 		"raw-ceremony-secret-wwww", "raw-step-up-vvvv", "raw-webauthn-uuuu",
 		"Bearer " + synthBearer,
 	}

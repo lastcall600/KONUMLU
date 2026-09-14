@@ -2,7 +2,7 @@
 
 Identity-owned substrate for consumer authentication abuse protection. This is **not** a fraud engine, **not** Trust / Güven Pasaportu, and **not** complete 0C-AUTH.
 
-AUTH-B session lifecycle/step-up is documented in `auth-session.md`. AUTH-C is implemented locally (`docs/operations/AUTH-SECURITY.md`) but production HumanChallenge/email/SMS vendors remain launch blockers. Completing AUTH-A does not make consumer auth production-complete.
+AUTH-B session lifecycle/step-up is documented in `auth-session.md`. AUTH-C is implemented locally (`docs/operations/AUTH-SECURITY.md`). HumanChallenge production provider is Cloudflare Turnstile; production widget credentials, frontend widget, and email/SMS vendors remain launch blockers. Completing AUTH-A does not make consumer auth production-complete.
 
 ## Rate-limit dimensions
 
@@ -81,20 +81,39 @@ HTTP mapping stays generic: `rate_limited`, `unavailable`, `forbidden`. Internal
 
 ## HumanChallenge port
 
-Identity policy → `HumanChallenge` port → development/test `fake` or `unconfigured` stub.
+Identity policy → `HumanChallenge` port → `fake` (dev/test), `unconfigured` (fail-closed stub), or production **Cloudflare Turnstile**.
 
 - Frontend tokens are never trusted alone
-- Server verifies token + expected action (`AuthOperation`) + configured hostname when set
-- Solving a challenge is **not** identity verification
-- Production vendor is **not** selected in AUTH-A (no Cloudflare/Turnstile SDK, no production secret)
+- Server verifies token + expected action (`AuthOperation`, server-owned) + exact hostname allowlist
+- Solving a challenge is **not** identity verification, Step-Up, Trust, EİDS, or the Türkiye Compliance Gateway
+- Production adapter: stdlib `POST https://challenges.cloudflare.com/turnstile/v0/siteverify` (`secret` + `response` only). V1 does **not** send `remoteip`. No Cloudflare SDK.
+- Success requires `success=true` **and** hostname on the allowlist **and** `action` equal to the server operation. `success=true` alone is not enough.
+- Token length max 2048; empty/oversized tokens are rejected before Siteverify
+- One Siteverify attempt with bounded timeout (default 3s). No retry and no `idempotency_key` in V1 (tokens are single-use; ambiguous network/provider results fail closed — require a fresh token)
+- Cloudflare `timeout-or-duplicate` maps to the internal expired/replay class (`challenge_failed`), not a provider outage
+- Secret and challenge token are never logged or returned
 
-Provider modes: `none` | `fake` | `unconfigured`.
+Provider modes: `none` | `fake` | `unconfigured` | `turnstile`.
 
-Staging/production reject `fake`. Challenge-required operations with provider `none` fail process start. `unconfigured` + required operations is allowed at start and **fail-closed** on every required request.
+Staging/production reject `fake`. Challenge-required operations with provider `none` fail process start. `unconfigured` + required operations is allowed at start and **fail-closed** on every required request. `turnstile` with required operations and missing secret or empty/wildcard hostname allowlist fails process start.
+
+### Action mapping (server-owned)
+
+The widget `action` must equal the Identity `AuthOperation` for that HTTP handler. The client cannot choose the expected action. Current challengeable config operations:
+
+`password_login`, `passkey_login_begin`, `passkey_login_finish`, `signup_start`, `signup_finish`, `signup_complete`, `reset_start`, `reset_verify`, `reset_complete`, `passkey_register_begin`, `passkey_register_finish`
+
+### FRONTEND_WIDGET_PENDING
+
+Consumer auth requests already accept `challengeToken`. There is no Turnstile widget yet. Expected contract:
+
+browser Turnstile widget (public sitekey) → token → existing auth JSON `challengeToken` → backend Siteverify.
+
+Do not embed the secret key in the frontend.
 
 ## Replay
 
-When a challenge is required and the fake/local verifier succeeds, AUTH-A records a hashed-token Valkey replay key (max 1 / window). Production providers must either guarantee single-use or be used with this replay layer. AUTH-A does not add a PostgreSQL CAPTCHA ledger.
+When a challenge is required and the verifier succeeds, AUTH-A records a hashed-token Valkey replay key (max 1 / window). Cloudflare tokens are also single-use. **Both** controls coexist. AUTH-A does not add a PostgreSQL CAPTCHA ledger.
 
 ## Configuration
 
@@ -103,16 +122,19 @@ Grouped policy (existing login IP/account env vars remain required). Optional ov
 - `IDENTITY_AUTH_TARGET_*` (signup/reset verify-by-challenge-id; password-login identifier target uses `IDENTITY_AUTH_PASSWORD_USER_*`)
 - `IDENTITY_AUTH_COMPLETE_*` (signup/reset complete)
 - `IDENTITY_AUTH_SENSITIVE_*` (authenticated passkey enrollment, passkey remove, step-up, session revoke; password re-auth also uses this session window plus password-login IP/account)
-- `IDENTITY_HUMAN_CHALLENGE_PROVIDER`
+- `IDENTITY_HUMAN_CHALLENGE_PROVIDER` (`none` / `fake` / `unconfigured` / `turnstile`)
 - `IDENTITY_HUMAN_CHALLENGE_OPERATIONS`
-- `IDENTITY_HUMAN_CHALLENGE_HOSTNAME`
+- `IDENTITY_HUMAN_CHALLENGE_HOSTNAME` (comma-separated exact allowlist; no wildcards)
 - `IDENTITY_HUMAN_CHALLENGE_REPLAY_TTL`
+- `IDENTITY_HUMAN_CHALLENGE_TIMEOUT` (Turnstile Siteverify; default 3s)
+- `IDENTITY_HUMAN_CHALLENGE_TURNSTILE_SECRET` (server-only; never committed for production)
+- `IDENTITY_HUMAN_CHALLENGE_TURNSTILE_SITEKEY` (public widget key)
 
-No production challenge secrets are required for local proof.
+Production Cloudflare secrets must not be committed. Official dummy test credentials may be used only in test/dev proof.
 
 ## AUTH-B / AUTH-C
 
 AUTH-B is implemented locally (`docs/architecture/auth-session.md`): session rotation, idle Touch, security-center HTTP, passkey list/remove, Valkey Step-Up. HumanChallenge is not Step-Up. Device binding is not AUTH-C.
 
-AUTH-C (this package): durable `identity.auth.security` v1 outbox events (safe metadata only; unknown-account login failures omit user id and identifiers). Production HumanChallenge vendor is **not** selected (`none` / `unconfigured`; `fake` rejected in staging/production). Email/SMS vendors are **not** selected (`disabled` default; `external` requires an adapter at worker start; Identity never claims "sent"). Classification: **PRODUCTION_CODE_READY_PROVIDER_BLOCKED**. Operator runbook: `docs/operations/AUTH-SECURITY.md`.
+AUTH-C (this package): durable `identity.auth.security` v1 outbox events (safe metadata only; unknown-account login failures omit user id and identifiers). HumanChallenge production provider is Cloudflare Turnstile (`fake` rejected in staging/production; production credentials not in git). Email/SMS vendors are **not** selected (`disabled` default; `external` requires an adapter at worker start; Identity never claims "sent"). Classification: **HUMAN_CHALLENGE_ADAPTER_READY_CREDENTIALS_PENDING**. Operator runbook: `docs/operations/AUTH-SECURITY.md`.
 

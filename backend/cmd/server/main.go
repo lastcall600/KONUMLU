@@ -24,6 +24,7 @@ import (
 	"backend/internal/identity/httpapi"
 	"backend/internal/identity/publicprofile"
 	eidsadapter "backend/internal/infrastructure/eids"
+	"backend/internal/infrastructure/humanchallenge/turnstile"
 	"backend/internal/infrastructure/staffidp"
 	objstorage "backend/internal/infrastructure/storage"
 	"backend/internal/listings"
@@ -1428,13 +1429,25 @@ func newHumanChallenge(cfg config.Config) (identity.HumanChallengePolicy, identi
 		required[op] = struct{}{}
 	}
 	policy := identity.HumanChallengePolicy{
-		Provider:  cfg.HumanChallenge.Provider,
-		Required:  required,
-		Hostname:  cfg.HumanChallenge.Hostname,
-		ReplayTTL: cfg.HumanChallenge.ReplayTTL,
+		Provider:         cfg.HumanChallenge.Provider,
+		Required:         required,
+		Hostname:         cfg.HumanChallenge.Hostname,
+		AllowedHostnames: cfg.HumanChallenge.AllowedHostnames,
+		ReplayTTL:        cfg.HumanChallenge.ReplayTTL,
 	}
 	if err := policy.Validate(); err != nil {
 		return identity.HumanChallengePolicy{}, nil, err
+	}
+	if policy.ProviderName() == identity.HumanChallengeProviderTurnstile {
+		verifier, err := turnstile.New(turnstile.Config{
+			Secret:           cfg.HumanChallenge.TurnstileSecret,
+			AllowedHostnames: cfg.HumanChallenge.AllowedHostnames,
+			Timeout:          cfg.HumanChallenge.Timeout,
+		})
+		if err != nil {
+			return identity.HumanChallengePolicy{}, nil, err
+		}
+		return policy, verifier, nil
 	}
 	verifier, err := identity.NewHumanChallengeVerifier(cfg.HumanChallenge.Provider)
 	if err != nil {
