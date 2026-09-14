@@ -30,6 +30,12 @@ The local application drill executed **A**. A small **B** capability proof used 
 
 Media backup is a separate object-storage lifecycle. Do not treat a successful DB restore as a complete platform restore.
 
+## Türkiye Compliance Gateway backups (do not mix with this runbook)
+
+This runbook covers the **Germany** main-platform PostgreSQL/PostGIS only.
+
+Sensitive TR Compliance Gateway database backups must stay **inside Türkiye** (encrypted backup → separate TR storage; keys not beside objects). Do **not** automatically back up TR sensitive data to Germany. Retention duration is a legal/product decision. Source of truth: [ADR-015](../ADR/ADR-015-tr-compliance-gateway-data-residency.md).
+
 ## Production backup strategy
 
 Assumptions: single primary PostgreSQL/PostGIS (modular monolith; no invented replica topology). Hosting may add replicas later without changing application code.

@@ -14,7 +14,7 @@
 
 **Constraint:** No third-party web framework. Local PostgreSQL/PostGIS and Valkey via Docker Compose are in scope. Password HTTP login is in place as Argon2id fallback; OTP send is not started. Remember Me is not a current requirement. Password reset HTTP is in place (challenge + hash-only reset proof + session revoke/`session_epoch`; no auto-login). Browser session resolve uses a disposable Valkey hot cache keyed by token hash, with PostgreSQL remaining authoritative. Authenticated passkey registration HTTP binds ceremonies to the session user. Signup verification start/finish HTTP issues a short-lived hash-only signup proof; `POST /v1/auth/signup/complete` creates the Identity user from that proof. Public and authenticated browser auth POSTs use Identity multi-dimensional Valkey abuse limits (fail-closed); session cache still fails open to PostgreSQL. Verification challenges persist hash-only secrets; worker/server load an env-injected AES-256 material keyring. Platform transactional outbox (`platform.outbox_events`) and `cmd/worker` relay are in place; Notifications intent handling upserts deliveries and invokes DeliveryService when a sender is wired. Email/SMS channel modes are `disabled` (default) or `external`; external fails worker startup unless a vendor adapter is registered (vendors not selected; missing/disabled channel is retryable, never a no-op send).
 
-**Progress:** 0B-01 through 0B-05, 0B-07, 0B-08, 0B-09, 0B-10, 0B-12, 0B-13, 0B-14, 0B-15, 0B-16, 0B-17, 0B-18, 0B-19, 0B-20, 0B-24, 0B-25, 0B-26, 0B-27, 0B-28, 0B-29, 0B-30, 0B-31, 0B-32, 0B-33, 0B-34, 0B-35, 0B-36, 0B-37, 0B-38, 0B-39, 0B-40, 0B-41, 0B-42, 0B-43, 0B-44, 0B-45, 0B-46, 0B-48, 0B-49, 0B-51, 0B-53, 0B-54, 0B-55, 0B-56, 0B-57, 0B-59, 0B-60, 0B-61, 0B-62, 0B-63, 0B-64, 0B-65, 0B-66, 0B-67, 0B-68, 0B-68A, 0B-69, 0B-70, 0B-71, 0B-72, 0B-73, 0B-74, 0B-75, 0B-76, 0B-77, 0B-78, 0B-79, 0B-80, 0B-81, 0B-82, 0B-83, 0B-84, 0B-85, 0B-86, 0B-87, 0B-88, 0B-89, 0B-90, 0B-91, 0B-92, 0B-93, 0B-94, 0B-95, 0B-96, 0B-97, 0B-98, 0B-99, 0B-100, 0B-101, 0B-102, 0B-103, 0B-104, 0B-105, 0B-106, and 0B-108 complete (scaffold through Need status gate on Transaction lifecycle). NOTIFY-A (0C-NOTIFY-A) remains the frozen catalog/000052 foundation. NOTIFY-B local (0C-NOTIFY-B) marketplace producers, provider-neutral `channel_deliveries` dispatcher, and Identity JIT contact resolve are **READY_FOR_REVIEW** (no 000053, no vendors). Phase 0A architecture gate (0A-32): PASS. V1 blocking gates: none.
+**Progress:** 0B-01 through 0B-05, 0B-07, 0B-08, 0B-09, 0B-10, 0B-12, 0B-13, 0B-14, 0B-15, 0B-16, 0B-17, 0B-18, 0B-19, 0B-20, 0B-24, 0B-25, 0B-26, 0B-27, 0B-28, 0B-29, 0B-30, 0B-31, 0B-32, 0B-33, 0B-34, 0B-35, 0B-36, 0B-37, 0B-38, 0B-39, 0B-40, 0B-41, 0B-42, 0B-43, 0B-44, 0B-45, 0B-46, 0B-48, 0B-49, 0B-51, 0B-53, 0B-54, 0B-55, 0B-56, 0B-57, 0B-59, 0B-60, 0B-61, 0B-62, 0B-63, 0B-64, 0B-65, 0B-66, 0B-67, 0B-68, 0B-68A, 0B-69, 0B-70, 0B-71, 0B-72, 0B-73, 0B-74, 0B-75, 0B-76, 0B-77, 0B-78, 0B-79, 0B-80, 0B-81, 0B-82, 0B-83, 0B-84, 0B-85, 0B-86, 0B-87, 0B-88, 0B-89, 0B-90, 0B-91, 0B-92, 0B-93, 0B-94, 0B-95, 0B-96, 0B-97, 0B-98, 0B-99, 0B-100, 0B-101, 0B-102, 0B-103, 0B-104, 0B-105, 0B-106, and 0B-108 complete (scaffold through Need status gate on Transaction lifecycle). NOTIFY-A (0C-NOTIFY-A) remains the frozen catalog/000052 foundation. NOTIFY-B local (0C-NOTIFY-B) marketplace producers, provider-neutral `channel_deliveries` dispatcher, and Identity JIT contact resolve are **READY_FOR_REVIEW** (no 000053, no vendors). ADR-015 (TR Compliance Gateway / data residency) is **READY_FOR_REVIEW** / 🔒 FROZEN (docs only). Phase 0A architecture gate (0A-32): PASS. V1 blocking gates: none.
 
 ---
 
@@ -49,7 +49,7 @@
 - [x] ADR-012 / 0A-21 — Accepted; G-07 / O-007 resolved
 - [x] ADR-013 / 0A-33 — Accepted; G-09 / O-009 resolved (separate Next.js app, `web/apps/admin`)
 - [x] ADR-014 / 0A-34 — SUPERSEDED / NOT NEEDED (duplicates ADR-009)
-- [x] 0A-32 — Architecture gate review **PASS** (V1 blocking gates: none; G-06 deferred V1.5)
+- [x] ADR-015 — 🔒 FROZEN / Accepted: Türkiye Compliance Gateway and data residency boundary (main platform remains Germany/Hetzner; TR node is not a general app server). No application code, migrations, or dependencies in this freeze.
 
 ### Phase 0B
 
@@ -161,7 +161,7 @@
 
 ## What Is In Progress
 
-**Phase 0B** — backend scaffold in progress (0B-01 through 0B-108 complete as listed above). NOTIFY-A remains frozen (`000052`). NOTIFY-B producers + dispatcher are **READY_FOR_REVIEW** (providers, push endpoints, saved-search match, and moderation cutover remain later).
+**Phase 0B** — backend scaffold in progress (0B-01 through 0B-108 complete as listed above). NOTIFY-A remains frozen (`000052`). NOTIFY-B producers + dispatcher are **READY_FOR_REVIEW** (providers, push endpoints, saved-search match, and moderation cutover remain later). ADR-015 TR Compliance Gateway / data residency is **READY_FOR_REVIEW** (documentation freeze only; no gateway implementation).
 
 **Phase 0A remaining docs (not architecture blockers):** ADR-006, ADR-008, ADR-010; Group 4 domain specs not started.
 
