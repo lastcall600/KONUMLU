@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"backend/internal/eids/trdecision"
 	listingcontracts "backend/internal/listings/contracts"
 	mdcontracts "backend/internal/masterdata/contracts"
 )
@@ -15,6 +16,7 @@ type Service struct {
 	policy   mdcontracts.EIDSRequirementLookup
 	gateway  Gateway
 	now      func() time.Time
+	verifier *trdecision.Verifier
 }
 
 func NewService(store store, listings listingcontracts.EIDSSubject, policy mdcontracts.EIDSRequirementLookup, gateway Gateway, now func() time.Time) (*Service, error) {
@@ -147,6 +149,9 @@ func (s *Service) startKind(ctx context.Context, listingID ID, kind Verification
 		}
 		return Verification{}, mapStoreErr(err)
 	}
+	if err := s.ensureSubjectRef(ctx, pending); err != nil {
+		return Verification{}, mapStoreErr(err)
+	}
 	return s.invokeGateway(ctx, pending)
 }
 
@@ -154,6 +159,9 @@ func (s *Service) retryOrReturn(ctx context.Context, v Verification) (Verificati
 	effective, err := s.persistEffective(ctx, v)
 	if err != nil {
 		return Verification{}, err
+	}
+	if err := s.ensureSubjectRef(ctx, effective); err != nil {
+		return Verification{}, mapStoreErr(err)
 	}
 	switch effective.Status {
 	case StatusPending, StatusUnavailable:
@@ -222,7 +230,9 @@ func mapStoreErr(err error) error {
 		return nil
 	}
 	if errors.Is(err, errNotFound) || errors.Is(err, errConflict) || errors.Is(err, errUnavailable) ||
-		errors.Is(err, errStoreRequired) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		errors.Is(err, errStoreRequired) || errors.Is(err, errReplayConflict) || errors.Is(err, errUnmappedSubject) ||
+		errors.Is(err, errDecisionRejected) || errors.Is(err, errInvalidVerification) || errors.Is(err, errInvalidTransition) ||
+		errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return err
 	}
 	return errUnavailable

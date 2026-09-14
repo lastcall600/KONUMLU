@@ -31,6 +31,15 @@ func TestPostgresStoreRequiresPool(t *testing.T) {
 	if err := p.Update(context.Background(), v, v.UpdatedAt); !errors.Is(err, errUnavailable) {
 		t.Fatalf("update err = %v", err)
 	}
+	if _, err := p.LookupSubject(context.Background(), "x"); !errors.Is(err, errUnavailable) {
+		t.Fatalf("lookup err = %v", err)
+	}
+	if _, err := p.GetReplay(context.Background(), "x"); !errors.Is(err, errUnavailable) {
+		t.Fatalf("replay err = %v", err)
+	}
+	if _, _, err := p.LatestReplayIssuedAt(context.Background(), "x"); !errors.Is(err, errUnavailable) {
+		t.Fatalf("latest issued err = %v", err)
+	}
 }
 
 func TestMapDBErr(t *testing.T) {

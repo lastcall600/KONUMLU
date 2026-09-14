@@ -24,6 +24,9 @@ var (
 	errNotFound            = errors.New("eids verification not found")
 	errForbidden           = errors.New("eids access denied")
 	errConflict            = errors.New("eids verification conflict")
+	errReplayConflict      = errors.New("eids signed decision conflict")
+	errUnmappedSubject     = errors.New("eids subject_ref not mapped")
+	errDecisionRejected    = errors.New("eids signed decision rejected")
 )
 
 var (
@@ -41,6 +44,9 @@ var (
 	ErrNotFound            = errNotFound
 	ErrForbidden           = errForbidden
 	ErrConflict            = errConflict
+	ErrReplayConflict      = errReplayConflict
+	ErrUnmappedSubject     = errUnmappedSubject
+	ErrDecisionRejected    = errDecisionRejected
 )
 
 // VerificationType is listing EİDS kind. Property and vehicle never substitute.
@@ -127,6 +133,14 @@ func NewID() (ID, error) {
 	id[6] = (id[6] & 0x0f) | 0x40
 	id[8] = (id[8] & 0x3f) | 0x80
 	return id, nil
+}
+
+func NewSubjectRef() (string, error) {
+	var b [32]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", errUnavailable
+	}
+	return hex.EncodeToString(b[:]), nil
 }
 
 func ParseID(s string) (ID, error) {
@@ -299,6 +313,40 @@ func allowedTransition(from, to Status) bool {
 		return false
 	}
 	return false
+}
+
+// ApplySignedDecision sets this attempt from a TR signed decision.
+// Gateway ApplyOutcome transitions stay unchanged; signed ingest may supersede
+// an older applied state on the same verification row when issued_at is newer.
+func (v Verification) ApplySignedDecision(approved bool, expiresAt *time.Time, now time.Time) (Verification, error) {
+	if now.Before(v.CreatedAt) {
+		return Verification{}, errInvalidVerification
+	}
+	next := v
+	next.UpdatedAt = now
+	requested := now
+	if next.RequestedAt == nil {
+		next.RequestedAt = &requested
+	}
+	at := now
+	if approved {
+		next.Status = StatusVerified
+		next.VerifiedAt = &at
+		next.FailedAt = nil
+		next.FailureCode = ""
+		if expiresAt != nil {
+			next.ExpiresAt = cloneTimePtr(expiresAt)
+		}
+	} else {
+		next.Status = StatusFailed
+		next.FailedAt = &at
+		next.VerifiedAt = nil
+		next.FailureCode = FailureVerificationFailed
+	}
+	if err := next.Validate(); err != nil {
+		return Verification{}, err
+	}
+	return next, nil
 }
 
 func (v Verification) ApplyOutcome(out ProviderOutcome, now time.Time) (Verification, error) {

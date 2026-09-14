@@ -203,6 +203,7 @@ type Config struct {
 	// StaffDevIDP is an explicit development/test Staff IAM fixture. It is never
 	// a production fallback and must stay empty in staging/production.
 	StaffDevIDP StaffDevIDP
+	TRCompliance TRCompliance
 }
 
 // Email is the transactional email provider selection. Credentials are never
@@ -698,6 +699,12 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("%s cannot be combined with STAFF_IDP_*", envStaffDevIDPEnabled)
 	}
 	cfg.StaffDevIDP = staffDevIDP
+
+	tr, err := parseTRCompliance()
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.TRCompliance = tr
 
 	if err := applyRuntimeGates(&cfg); err != nil {
 		return Config{}, err

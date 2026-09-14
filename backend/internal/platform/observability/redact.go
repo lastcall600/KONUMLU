@@ -28,6 +28,8 @@ var safeLogKeys = map[string]struct{}{
 	"deliveryoutcome": {}, "deliveryattempt": {}, "intentstatus": {},
 	"channelcode": {}, "intentid": {}, "deliveryid": {},
 	"endpointid": {}, "pushplatform": {}, "pushprovider": {},
+	"decisionid": {}, "verificationtype": {}, "decisionstatus": {},
+	"keyid": {}, "resultclass": {}, "httpstatus": {},
 }
 
 var sensitiveKeyExact = map[string]struct{}{
@@ -62,6 +64,8 @@ var sensitiveKeyExact = map[string]struct{}{
 	"ceremonytoken": {}, "stepup": {}, "webauthnchallenge": {},
 	"credentialrawid": {}, "passkeycredentialid": {},
 	"uploadurl": {}, "signedurl": {}, "presignedurl": {}, "objectkey": {},
+	"subjectref": {}, "signature": {}, "signedbody": {}, "rawsignedbody": {},
+	"trsigningprivatekey": {}, "trcomplianceingresstoken": {},
 }
 
 var sensitiveKeyContains = []string{
