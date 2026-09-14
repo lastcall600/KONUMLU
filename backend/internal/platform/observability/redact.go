@@ -26,7 +26,7 @@ var safeLogKeys = map[string]struct{}{
 	"mediaid": {}, "mediastatus": {}, "processingoutcome": {}, "objectcategory": {},
 	"notifypurpose": {}, "notificationevent": {}, "suppressionreason": {},
 	"deliveryoutcome": {}, "deliveryattempt": {}, "intentstatus": {},
-	"channelcode": {}, "intentid": {},
+	"channelcode": {}, "intentid": {}, "deliveryid": {},
 }
 
 var sensitiveKeyExact = map[string]struct{}{

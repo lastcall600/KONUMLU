@@ -1,6 +1,6 @@
 # Notification operations (NOTIFY-A / NOTIFY-B)
 
-This is not legal advice. External email/SMS/push vendors are **not selected**. Do not treat dispatch as production-ready.
+This is not legal advice. Transactional email uses Amazon SES when `NOTIFICATIONS_EMAIL_MODE=external` and `EMAIL_PROVIDER=ses`. SMS/push vendors are **not selected**. Do not treat SMS/push dispatch as production-ready.
 
 ## Processes
 
@@ -13,9 +13,19 @@ Shutdown cancels both loops. Do not add another daemon.
 
 ## Unconfigured providers
 
-Production dispatcher email/SMS/push senders are **nil**. The dispatcher does **not** claim pending rows and does **not** mark `accepted`. It logs `notification_dispatch_unconfigured` once per process and waits on the outbox poll interval. No hot loop. No fake success.
+When email mode is `disabled`, dispatcher email sender is **nil**. The dispatcher does **not** claim pending email rows and does **not** mark `accepted`. It logs `notification_dispatch_unconfigured` once per process and waits on the outbox poll interval. No hot loop. No fake success.
 
-Verification OTP still uses the legacy `notifications.intent` + `DeliveryService` path (`disabled` never sent; `external` requires a registered adapter). Do not mix OTP into `notifications.intents.variables`.
+When email mode is `external` with SES wired, the dispatcher claims email `channel_deliveries` only after preference/consent/account-state/JIT destination/suppression re-check. SES is transport only.
+
+Verification OTP still uses the legacy `notifications.intent` + `DeliveryService` path (`disabled` never sent; `external` uses the same SES transport). Do not mix OTP into `notifications.intents.variables`.
+
+## SES email
+
+- Provider: Amazon SES, API v2 `SendEmail`
+- Accept means queued by SES, not mailbox delivery
+- No provider-level exactly-once claim; existing dispatcher backoff is authoritative
+- Credentials: AWS default chain; never committed or logged
+- Operator prerequisites: verified sending domain/identity in the SES region; region-specific sandbox; production access request; DKIM/domain authentication in SES/DNS
 
 ## Claim / retry
 
@@ -35,7 +45,7 @@ No registration HTTP. No endpoint table. Eligible push channels are suppressed `
 
 ## What not to do
 
-- Do not add Firebase/APNs/WebPush/SendGrid/Twilio SDKs without an approved dependency and vendor decision
+- Do not add Firebase/APNs/WebPush/Twilio SDKs without an approved dependency and vendor decision
 - Do not create `000053` without a reviewed schema proposal
 - Do not expose `POST /send-notification`
 - Do not cut over moderation warnings without a double-notify review

@@ -2,7 +2,7 @@
 
 Provider-neutral product/privacy foundation for KONUMLU notifications. This document is **not** legal advice and does not encode unreviewed KVKK/İYS conclusions.
 
-**Package status:** NOTIFY-A frozen. NOTIFY-B producers + provider-neutral dispatch foundation: `NOTIFY_B_APPLICATION_READY_FOR_REVIEW` (not vendor-ready).
+**Package status:** NOTIFY-A frozen. NOTIFY-B producers + provider-neutral dispatch foundation: `NOTIFY_B_APPLICATION_READY_FOR_REVIEW`. Transactional email transport: Amazon SES (`PROVIDER-B`). SMS/push vendors remain unselected.
 
 Additive schema `000052_notifications_policy_core` is **unchanged after approval**. Preference/consent/inbox HTTP, PostgreSQL stores, AUTH-C selected-event materialization, and in-app channel planning are implemented. External email/SMS/push providers remain unselected. This is **not** production notification readiness.
 
@@ -30,7 +30,8 @@ Additive schema `000052_notifications_policy_core` is **unchanged after approval
 - `internal/notifications/policy` — one catalog remains authoritative. Durable model is `(channel, scope_type, scope_key)`. No row means catalog default. Stored `enabled=false` does not mute server-required channels.
 - `internal/notifications/httpapi` — session CSRF/Origin consumer APIs for preferences, consents, inbox. **No public send-notification API. No push registration HTTP.**
 - `internal/identity/contracts.NotificationEligibilityReader` — verified email/phone **booleans**. `NotificationContactResolver` returns a verified destination **in memory only** for the dispatcher (not HTTP, not stored, redacted in fmt).
-- `internal/infrastructure/notifications` — verification email/SMS adapters (`disabled` / `external`). New notification `ChannelSender` ports are separate. No vendor SDK.
+- `internal/infrastructure/notifications` — verification email/SMS bind (`disabled` / `external`).
+- `internal/infrastructure/email/ses` — Amazon SES API v2 `SendEmail` transport (AWS SDK v2). Not notification policy.
 - Identity signup/reset enqueue `notifications.intent` in the same PostgreSQL transaction as the challenge. **OTP stays on this legacy path.**
 - Moderation warning remains legacy `notifications.moderation.warning` v1 (not cut over; avoids double-notify).
 - AUTH-C still emits `identity.auth.security` v1. Worker runs Identity audit logging then Notifications materialization as a **single sequential handler**.
@@ -402,13 +403,15 @@ HTTP APIs, PostgreSQL stores, AUTH-C selected consumption, and in-app planning a
 
 ## 24. Provider blockers (unchanged)
 
-HumanChallenge vendor, email vendor, SMS vendor. Push vendor is a separate NOTIFY-B decision. Do not claim provider readiness.
+HumanChallenge production widget credentials. SMS vendor. Push vendor. Amazon SES is the frozen transactional email provider; production sending still requires verified identity, region sandbox exit, and runtime credentials. Do not claim mailbox delivery from SendEmail accept.
 
 ---
 
 ## 25. Remaining after NOTIFY-B
 
-1. Email/SMS/push **vendor** selection and production adapters (launch blockers)
+1. SMS/push **vendor** selection and production adapters (launch blockers); SES email adapter exists (PROVIDER-B)
+2. Push endpoint schema (000053+) after encryption/ownership review
+3. Optional cutover of `notifications.moderation.warning` onto `notifications.intents`
 2. Push endpoint schema (000053+) after encryption/ownership review
 3. Optional cutover of `notifications.moderation.warning` onto `notifications.intents`
 4. Saved-search match producer (needs an upstream match event)

@@ -33,17 +33,19 @@ AUTH-A (abuse) and AUTH-B (session/step-up) remain in force. AUTH-C adds durable
 
 **Recovery:** Restore Turnstile Siteverify (official endpoint); confirm hostname allowlist and server-owned action binding; hashed replay keys in Valkey may require extra solves after flush (never privilege gain). Production sitekey/secret live in the hosting secret store, not git.
 
-Turnstile production widget credentials and the consumer widget remain **launch blockers**. Email and SMS vendors remain **launch blockers**. This is not the Türkiye Compliance Gateway.
+Turnstile production widget credentials and the consumer widget remain **launch blockers**. SMS vendor remains a **launch blocker**. This is not the Türkiye Compliance Gateway.
 
 ## Email/SMS outage
 
-**User impact:** Signup/reset HTTP still returns a generic `challengeId` (anti-enumeration). Mail/SMS is **not** claimed as sent. Users will not receive a code until a vendor adapter is wired and healthy.
+**User impact:** Signup/reset HTTP still returns a generic `challengeId` (anti-enumeration). Mail is sent only after SES accepts the message; HTTP never claims `sent`. Users will not receive a code while SES is down, in sandbox against an unverified recipient, or while email mode is `disabled`.
 
-**Retry/degraded behavior:** `NOTIFICATIONS_EMAIL_MODE` / `NOTIFICATIONS_SMS_MODE` = `disabled` leaves senders nil; worker retries and never completes a successful no-op. `external` without an adapter **fails worker start**.
+**Retry/degraded behavior:** `NOTIFICATIONS_EMAIL_MODE` / `NOTIFICATIONS_SMS_MODE` = `disabled` leaves senders nil; worker retries and never completes a successful no-op. `external` email requires `EMAIL_PROVIDER=ses` plus `EMAIL_SES_REGION` and `EMAIL_SES_FROM` at config load, and a constructed SES adapter at worker start. `external` SMS without an adapter **fails worker start**.
+
+**SES (transactional email):** API v2 `SendEmail`. Server-owned From only. AWS default credential chain (environment / task role / instance role / workload identity). Access keys are never committed or logged. SES sandbox is region-specific; the sending domain/identity must be verified in that region; production access out of sandbox is an AWS account request, not application truth. DKIM/domain authentication is configured in SES/DNS, not in this repo. SendEmail success means SES accepted/queued the message — it is **not** end-user delivery. SES does not provide exactly-once on this path; the existing dispatcher/outbox remain at-least-once on ambiguous failures and own retry/backoff. Permanent SES errors are not retried.
 
 **Truthful messaging:** API bodies must not include `sent` / `delivered`. Client copy should say the message will arrive if the channel is available — not that it was sent.
 
-Email and SMS vendors remain **launch blockers**.
+SMS vendor remains a **launch blocker**. SES production credentials, verified domain, DKIM, and sandbox exit remain operator steps (`LIVE_SES_TEST_PENDING` until a verified test destination is used).
 
 ## Valkey outage
 

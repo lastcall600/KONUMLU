@@ -74,19 +74,25 @@ const (
 	envMaterialKeys                 = "IDENTITY_VERIFICATION_MATERIAL_KEYS"
 	envNotificationsEmailMode       = "NOTIFICATIONS_EMAIL_MODE"
 	envNotificationsSMSMode         = "NOTIFICATIONS_SMS_MODE"
+	envEmailProvider                = "EMAIL_PROVIDER"
+	envEmailSESRegion               = "EMAIL_SES_REGION"
+	envEmailSESFrom                 = "EMAIL_SES_FROM"
+	envEmailSESTimeout              = "EMAIL_SES_TIMEOUT"
+	defaultEmailSESTimeout          = 5 * time.Second
 	envMediaMalwareScanRequired     = "MEDIA_MALWARE_SCAN_REQUIRED"
 	envMediaImageModerationRequired = "MEDIA_IMAGE_MODERATION_REQUIRED"
 	envStaffIDPIssuer               = "STAFF_IDP_ISSUER"
 	envStaffIDPAudience             = "STAFF_IDP_AUDIENCE"
 	envStaffIDPJWKSURL              = "STAFF_IDP_JWKS_URL"
-	envStaffDevIDPEnabled          = "STAFF_DEV_IDP_ENABLED"
-	envStaffDevIDPToken            = "STAFF_DEV_IDP_TOKEN"
-	envStaffDevIDPStaffID          = "STAFF_DEV_IDP_STAFF_ID"
-	envStaffDevIDPRoles           = "STAFF_DEV_IDP_ROLES"
+	envStaffDevIDPEnabled           = "STAFF_DEV_IDP_ENABLED"
+	envStaffDevIDPToken             = "STAFF_DEV_IDP_TOKEN"
+	envStaffDevIDPStaffID           = "STAFF_DEV_IDP_STAFF_ID"
+	envStaffDevIDPRoles             = "STAFF_DEV_IDP_ROLES"
 	materialAESKeySize              = 32
 
 	NotificationChannelDisabled = "disabled"
 	NotificationChannelExternal = "external"
+	EmailProviderSES            = "ses"
 )
 
 // Config holds process configuration loaded from the environment.
@@ -113,7 +119,7 @@ type Config struct {
 	WebAuthnCeremonyTTL         time.Duration
 	SessionIdle                 time.Duration
 	SessionAbsolute             time.Duration
-	StepUpTTL                    time.Duration
+	StepUpTTL                   time.Duration
 	AuthIPMaxAttempts           int
 	AuthIPWindow                time.Duration
 	AuthPasswordUserMaxAttempts int
@@ -146,6 +152,9 @@ type Config struct {
 	// registered vendor adapter at process wiring; credentials are not defined here.
 	NotificationsEmailMode string
 	NotificationsSMSMode   string
+	// Email is transactional Amazon SES settings. Secrets are not stored here;
+	// the AWS default credential chain is used at adapter construction.
+	Email Email
 	// Media scanner/moderation requirements. Vendors are not selected; required+missing is retryable.
 	MediaMalwareScanRequired     bool
 	MediaImageModerationRequired bool
@@ -156,6 +165,25 @@ type Config struct {
 	// StaffDevIDP is an explicit development/test Staff IAM fixture. It is never
 	// a production fallback and must stay empty in staging/production.
 	StaffDevIDP StaffDevIDP
+}
+
+// Email is the transactional email provider selection. Credentials are never
+// stored on this struct; SES uses the AWS default credential chain.
+type Email struct {
+	Provider string
+	Region   string
+	From     string
+	Timeout  time.Duration
+}
+
+func (e Email) String() string {
+	return fmt.Sprintf("config.Email{provider:%s region:%s from_configured:%t}", e.Provider, e.Region, e.From != "")
+}
+
+func (e Email) GoString() string { return e.String() }
+
+func (e Email) SESWired() bool {
+	return e.Provider == EmailProviderSES && e.Region != "" && e.From != "" && e.Timeout > 0
 }
 
 // StaffIDP holds issuer/audience/JWKS for a future staff identity adapter.
@@ -473,6 +501,11 @@ func Load() (Config, error) {
 	}
 	cfg.NotificationsEmailMode = emailMode
 	cfg.NotificationsSMSMode = smsMode
+	email, err := parseEmail(emailMode)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.Email = email
 
 	malwareReq, err := parseOptionalBool(envMediaMalwareScanRequired)
 	if err != nil {
@@ -620,6 +653,48 @@ func parseOptionalBool(name string) (bool, error) {
 	default:
 		return false, fmt.Errorf("%s must be true or false", name)
 	}
+}
+
+func parseEmail(emailMode string) (Email, error) {
+	provider := strings.ToLower(strings.TrimSpace(os.Getenv(envEmailProvider)))
+	if provider == "" && emailMode != NotificationChannelExternal {
+		return Email{}, nil
+	}
+	if provider == "" {
+		return Email{}, fmt.Errorf("%s must be %s when %s=%s", envEmailProvider, EmailProviderSES, envNotificationsEmailMode, NotificationChannelExternal)
+	}
+	if provider != EmailProviderSES {
+		return Email{}, fmt.Errorf("%s must be %s", envEmailProvider, EmailProviderSES)
+	}
+	out := Email{
+		Provider: EmailProviderSES,
+		Region:   strings.TrimSpace(os.Getenv(envEmailSESRegion)),
+		From:     strings.TrimSpace(os.Getenv(envEmailSESFrom)),
+		Timeout:  defaultEmailSESTimeout,
+	}
+	if raw := strings.TrimSpace(os.Getenv(envEmailSESTimeout)); raw != "" {
+		d, err := parsePositiveDuration(envEmailSESTimeout, raw)
+		if err != nil {
+			return Email{}, err
+		}
+		out.Timeout = d
+	}
+	if out.Timeout > 30*time.Second {
+		return Email{}, fmt.Errorf("%s must be 30s or less", envEmailSESTimeout)
+	}
+	if out.Region == "" {
+		return Email{}, fmt.Errorf("%s must not be empty when %s=%s", envEmailSESRegion, envEmailProvider, EmailProviderSES)
+	}
+	if strings.ContainsAny(out.Region, " \t\r\n") {
+		return Email{}, fmt.Errorf("%s is malformed", envEmailSESRegion)
+	}
+	if out.From == "" {
+		return Email{}, fmt.Errorf("%s must not be empty when %s=%s", envEmailSESFrom, envEmailProvider, EmailProviderSES)
+	}
+	if strings.ContainsAny(out.From, "\r\n") || !strings.Contains(out.From, "@") {
+		return Email{}, fmt.Errorf("%s is malformed", envEmailSESFrom)
+	}
+	return out, nil
 }
 
 func parseNotificationChannelMode(name string) (string, error) {

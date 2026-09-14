@@ -27,6 +27,9 @@ func (c Config) LogValue() slog.Value {
 		slog.Int("human_challenge_hostnames", len(c.HumanChallenge.AllowedHostnames)),
 		slog.Bool("turnstile_sitekey_configured", c.HumanChallenge.TurnstileSiteKey != ""),
 		slog.Bool("turnstile_secret_configured", c.HumanChallenge.TurnstileSecret != ""),
+		slog.String("email_provider", c.Email.Provider),
+		slog.String("email_ses_region", c.Email.Region),
+		slog.Bool("email_ses_from_configured", c.Email.From != ""),
 	)
 }
 

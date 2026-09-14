@@ -184,7 +184,9 @@ func sanitizeProviderErr(err error) error {
 		return err
 	}
 	if errors.Is(err, errProviderRequired) || errors.Is(err, errUnavailable) ||
-		errors.Is(err, errInvalidDelivery) {
+		errors.Is(err, errInvalidDelivery) ||
+		errors.Is(err, errProviderRetryable) || errors.Is(err, errProviderPermanent) ||
+		errors.Is(err, errProviderTimeout) || errors.Is(err, errProviderUnconfigured) {
 		return err
 	}
 	return errUnavailable

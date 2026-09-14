@@ -122,6 +122,22 @@ func TestHandleProviderFailureKeepsDeliveryRetryable(t *testing.T) {
 	}
 }
 
+func TestHandlePermanentProviderCompletesWithoutRetry(t *testing.T) {
+	store := NewMemoryStore()
+	email := &stubEmail{err: errProviderPermanent}
+	h := mustSendingHandler(t, store, email, &stubSMS{}, emailMaterial())
+	if err := h.Handle(context.Background(), intentEvent(t, validIntentJSON(t))); err != nil {
+		t.Fatalf("permanent must complete outbox: %v", err)
+	}
+	got, _ := store.GetByIntentID(mustIntentID(t))
+	if got.Status != StatusFailed || got.CompletedAt != nil {
+		t.Fatalf("permanent delivery = %+v", got)
+	}
+	if email.n != 1 {
+		t.Fatalf("sends=%d", email.n)
+	}
+}
+
 func TestHandleSuccessMarksSent(t *testing.T) {
 	store := NewMemoryStore()
 	h := mustSendingHandler(t, store, &stubEmail{ref: "ok"}, &stubSMS{}, emailMaterial())
