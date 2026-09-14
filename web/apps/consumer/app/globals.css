@@ -107,6 +107,15 @@ main {
   border-color: #111;
 }
 
+.pref-list {
+  margin: 0;
+  padding-inline-start: 1.2rem;
+}
+
+.pref-list li {
+  margin-block: 0.35rem;
+}
+
 .auth-primary-action {
   display: inline-block;
   margin-block-start: 0.5rem;

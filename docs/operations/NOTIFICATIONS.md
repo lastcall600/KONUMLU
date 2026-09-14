@@ -89,7 +89,7 @@ One `channel_deliveries` row per channel. Independent endpoint attempts. Channel
 
 Never log tokens, Web Push URLs, p256dh, auth, ciphertext, keys, or provider JWTs.
 
-Frontend: `WEB_PUSH_FRONTEND_PENDING` (no consumer service worker in this package). Mobile: `MOBILE_PUSH_CLIENT_PENDING`.
+Frontend: consumer Web Push client is in `web/apps/consumer` (`public/sw.js`, `/bildirimler`). Permission is user-gesture only. Logout does not revoke endpoints. Public VAPID key: `NEXT_PUBLIC_WEBPUSH_VAPID_PUBLIC_KEY`. Live send still `LIVE_WEBPUSH_TEST_PENDING`. Mobile: `MOBILE_PUSH_CLIENT_PENDING`.
 
 ## What not to do
 

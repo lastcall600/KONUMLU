@@ -1,5 +1,7 @@
 export type PublicConfig = {
   apiBaseUrl: string;
+  /** VAPID public key only. Never a private key or server credential. */
+  webPushVapidPublicKey: string;
 };
 
 const LOCAL_API_BASE_URL = "http://localhost:8080";
@@ -36,5 +38,8 @@ export function getPublicConfig(): PublicConfig {
   }
 
   assertAbsoluteHttpUrl(apiBaseUrl);
-  return { apiBaseUrl };
+  return {
+    apiBaseUrl,
+    webPushVapidPublicKey: process.env.NEXT_PUBLIC_WEBPUSH_VAPID_PUBLIC_KEY?.trim() ?? "",
+  };
 }
