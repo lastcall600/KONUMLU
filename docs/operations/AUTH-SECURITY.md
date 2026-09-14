@@ -27,13 +27,13 @@ AUTH-A (abuse) and AUTH-B (session/step-up) remain in force. AUTH-C adds durable
 
 ## HumanChallenge provider outage
 
-**Expected fail policy:** When an operation is in `IDENTITY_HUMAN_CHALLENGE_OPERATIONS`, missing/invalid/timeout/wrong-action/wrong-host/replay → request fails closed (`403`/`503`). Token omission is not success. Siteverify is one bounded attempt; do not retry spent tokens. V1 does not send `remoteip`.
+**Expected fail policy:** When an operation is in `IDENTITY_HUMAN_CHALLENGE_OPERATIONS`, missing token → `403` `challenge_required`. Invalid/timeout/wrong-action/wrong-host/replay → request fails closed (`403` `forbidden` or `503` `unavailable`). Token omission is not success. Siteverify is one bounded attempt; do not retry spent tokens. V1 does not send `remoteip`. Generic `forbidden` (CSRF, origin, Step-Up) is not a challenge signal.
 
 **Temporary response:** Leave provider `unconfigured` (fail-closed) or remove operations if challenge must not block login **only** with an explicit operator decision. `fake` is rejected in staging/production.
 
 **Recovery:** Restore Turnstile Siteverify (official endpoint); confirm hostname allowlist and server-owned action binding; hashed replay keys in Valkey may require extra solves after flush (never privilege gain). Production sitekey/secret live in the hosting secret store, not git.
 
-Turnstile production widget credentials and the consumer widget remain **launch blockers**. Netgsm SMS adapter exists; production Netgsm credentials, approved sender header, SMS credit, and OTP package remain operator steps (`LIVE_NETGSM_TEST_PENDING`). This is not the Türkiye Compliance Gateway.
+Turnstile production widget credentials remain **launch blockers**. The consumer widget exists (`NEXT_PUBLIC_TURNSTILE_SITEKEY` public-only; explicit render; memory-only `challengeToken`). Netgsm SMS adapter exists; production Netgsm credentials, approved sender header, SMS credit, and OTP package remain operator steps (`LIVE_NETGSM_TEST_PENDING`). This is not the Türkiye Compliance Gateway.
 
 ## Email/SMS outage
 
@@ -65,7 +65,7 @@ SES production credentials, verified domain, DKIM, and sandbox exit remain opera
 
 ## Secret compromise
 
-**Provider secret rotation:** Rotate Turnstile secret / email / SMS vendor secrets in the hosting secret store. Restart API/worker. Never log or commit production Turnstile secrets. The public sitekey may be placed in frontend config.
+**Provider secret rotation:** Rotate Turnstile secret / email / SMS vendor secrets in the hosting secret store. Restart API/worker. Never log or commit production Turnstile secrets. The public sitekey may be placed in frontend config (`NEXT_PUBLIC_TURNSTILE_SITEKEY`). Align `NEXT_PUBLIC_TURNSTILE_OPERATIONS` with `IDENTITY_HUMAN_CHALLENGE_OPERATIONS`.
 
 **Session/key considerations:** Rotate verification material keyring with overlap (existing sealed challenges). Session cookies remain hashed at rest; mass revoke via password reset or epoch bump if a session-signing/hash assumption is broken (tokens are random opaque secrets, not JWTs).
 

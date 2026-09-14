@@ -100,6 +100,7 @@ func TestRateLimitAndChallengeEmitControlledEvents(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("challenge required status = %d", rec.Code)
 	}
+	assertErrorCode(t, rec, "challenge_required")
 	if !containsEvent(sink2.Types(), identity.AuthEventChallengeRequired) {
 		t.Fatalf("events = %v", sink2.Types())
 	}

@@ -11,6 +11,7 @@ import {
   type IdentifierKind,
 } from "@/lib/auth";
 import { DEFAULT_LOCALE } from "@/lib/locale";
+import { AuthTurnstile, useTurnstileChallenge } from "@/components/TurnstileWidget";
 
 type Step = 1 | 2 | 3 | "done";
 
@@ -37,17 +38,26 @@ export default function PasswordResetPage() {
   const [resetProof, setResetProof] = useState("");
   const [password, setPassword] = useState("");
   const [passwordConfirm, setPasswordConfirm] = useState("");
+  const startChallenge = useTurnstileChallenge("reset_start");
+  const verifyChallenge = useTurnstileChallenge("reset_verify");
+  const completeChallenge = useTurnstileChallenge("reset_complete");
   const busy = status.kind === "loading";
 
   async function onStart(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (startChallenge.blocksSubmit) {
+      setStatus({ kind: "error", message: "Güvenlik doğrulaması gerekli." });
+      return;
+    }
     setStatus({ kind: "loading", message: "İstek gönderiliyor…" });
+    const challengeToken = startChallenge.consumeToken();
     try {
       const trimmed = identifier.trim();
       const result = await startPasswordReset({
         kind,
         identifier: trimmed,
         locale: DEFAULT_LOCALE,
+        challengeToken,
       });
       setIdentifier(trimmed);
       setChallengeId(result.challengeId);
@@ -60,23 +70,31 @@ export default function PasswordResetPage() {
           "İstek alındı. Bir kod aldıysanız girin. Kod gelmezse daha sonra tekrar deneyin.",
       });
     } catch (error) {
+      startChallenge.applyAuthError(error);
       setStatus({ kind: "error", message: messageFromError(error) });
     }
   }
 
   async function onVerify(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (verifyChallenge.blocksSubmit) {
+      setStatus({ kind: "error", message: "Güvenlik doğrulaması gerekli." });
+      return;
+    }
     setStatus({ kind: "loading", message: "Kod doğrulanıyor…" });
+    const challengeToken = verifyChallenge.consumeToken();
     try {
       const result = await verifyPasswordReset({
         challengeId,
         code: code.trim(),
+        challengeToken,
       });
       setResetProof(result.resetProof);
       setCode("");
       setStep(3);
       setStatus({ kind: "success", message: "Doğrulama tamamlandı. Yeni şifrenizi belirleyin." });
     } catch (error) {
+      verifyChallenge.applyAuthError(error);
       setStatus({ kind: "error", message: messageFromError(error) });
     }
   }
@@ -87,11 +105,17 @@ export default function PasswordResetPage() {
       setStatus({ kind: "error", message: "Şifreler eşleşmiyor. Lütfen tekrar deneyin." });
       return;
     }
+    if (completeChallenge.blocksSubmit) {
+      setStatus({ kind: "error", message: "Güvenlik doğrulaması gerekli." });
+      return;
+    }
     setStatus({ kind: "loading", message: "Şifre güncelleniyor…" });
+    const challengeToken = completeChallenge.consumeToken();
     try {
       await completePasswordReset({
         resetProof,
         newPassword: password,
+        challengeToken,
       });
       setResetProof("");
       setChallengeId("");
@@ -103,6 +127,7 @@ export default function PasswordResetPage() {
         message: "Şifreniz güncellendi. Tüm oturumlar kapatıldı. Giriş yapmanız gerekir.",
       });
     } catch (error) {
+      completeChallenge.applyAuthError(error);
       setStatus({ kind: "error", message: messageFromError(error) });
     }
   }
@@ -186,7 +211,8 @@ export default function PasswordResetPage() {
                   disabled={busy}
                 />
 
-                <button type="submit" disabled={busy}>
+                <AuthTurnstile challenge={startChallenge} />
+                <button type="submit" disabled={busy || startChallenge.blocksSubmit}>
                   Devam
                 </button>
               </form>
@@ -215,11 +241,12 @@ export default function PasswordResetPage() {
                   required
                   disabled={busy}
                 />
+                <AuthTurnstile challenge={verifyChallenge} />
                 <div className="auth-actions">
                   <button type="button" onClick={backToIdentifier} disabled={busy}>
                     Geri
                   </button>
-                  <button type="submit" disabled={busy}>
+                  <button type="submit" disabled={busy || verifyChallenge.blocksSubmit}>
                     Doğrula
                   </button>
                 </div>
@@ -259,7 +286,8 @@ export default function PasswordResetPage() {
                   required
                   disabled={busy}
                 />
-                <button type="submit" disabled={busy}>
+                <AuthTurnstile challenge={completeChallenge} />
+                <button type="submit" disabled={busy || completeChallenge.blocksSubmit}>
                   Şifreyi güncelle
                 </button>
               </form>

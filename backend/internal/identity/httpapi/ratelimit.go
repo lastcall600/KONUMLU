@@ -152,6 +152,8 @@ func riskErrorClass(out identity.RiskOutcome) string {
 		return "rate_limited"
 	case identity.ReasonStorageUnavailable, identity.ReasonProviderUnavailable:
 		return "unavailable"
+	case identity.ReasonChallengeRequired:
+		return "challenge_required"
 	default:
 		return "forbidden"
 	}

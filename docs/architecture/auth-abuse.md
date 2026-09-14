@@ -61,7 +61,7 @@ The existing Valkey primitive is used: atomic `INCR` with `PEXPIRE` only when th
 | Check | Valkey down | Notes |
 |---|---|---|
 | Auth abuse / issuance rate limits | **Fail closed** (`unavailable`) | Must not silently allow |
-| Human challenge when required | **Fail closed** (`unavailable` or generic `forbidden`) | Token omission is not success |
+| Human challenge when required | **Fail closed** (`unavailable`, `challenge_required` when the token is omitted, or generic `forbidden` on failed/invalid token) | Token omission is not success |
 | Session hot cache | **Fail open to PostgreSQL** | Unchanged (ADR-002) |
 | Challenge when **not** required | Provider is not called | Unrelated auth must not block on the provider |
 
@@ -77,7 +77,7 @@ Internal Identity contract only: `allow`, `challenge`, `step_up`, `restrict`, `r
 
 Internal reason codes (telemetry/policy, not user copy): `velocity_ip`, `velocity_account`, `velocity_target`, `challenge_required`, `challenge_failed`, `provider_unavailable`, `storage_unavailable`, `suspicious_auth_state`.
 
-HTTP mapping stays generic: `rate_limited`, `unavailable`, `forbidden`. Internal reason codes are not returned to the client.
+HTTP mapping: `rate_limited`, `unavailable`, `forbidden`, plus **`challenge_required` only when HumanChallenge is required and the request omitted the token**. Internal velocity/provider reason codes are not returned. Invalid, expired, wrong-action, and hostname-mismatch tokens stay generic `forbidden`. Generic `forbidden` (CSRF, origin, Step-Up) is not a challenge signal.
 
 ## HumanChallenge port
 
@@ -103,11 +103,9 @@ The widget `action` must equal the Identity `AuthOperation` for that HTTP handle
 
 `password_login`, `passkey_login_begin`, `passkey_login_finish`, `signup_start`, `signup_finish`, `signup_complete`, `reset_start`, `reset_verify`, `reset_complete`, `passkey_register_begin`, `passkey_register_finish`
 
-### FRONTEND_WIDGET_PENDING
+### FRONTEND_WIDGET
 
-Consumer auth requests already accept `challengeToken`. There is no Turnstile widget yet. Expected contract:
-
-browser Turnstile widget (public sitekey) → token → existing auth JSON `challengeToken` → backend Siteverify.
+Consumer auth requests accept `challengeToken`. The consumer Turnstile widget (`web/apps/consumer`, explicit render) sends that field for challenged operations. Public sitekey only (`NEXT_PUBLIC_TURNSTILE_SITEKEY`). Tokens are memory-only. Widget `action` equals the server `AuthOperation`. When a required challenge token is missing, HTTP is `403` `{ "error": "challenge_required" }` — same body for known and unknown accounts. Failed/invalid tokens remain `forbidden`. Other internal reason codes are not returned. The widget activates on `challenge_required` or `NEXT_PUBLIC_TURNSTILE_OPERATIONS`, not on generic `403`.
 
 Do not embed the secret key in the frontend.
 
