@@ -3,7 +3,8 @@
 **Status:** ✅ Accepted  
 **Date:** 2026-09-05  
 **Resolves:** D-010 (non-bypassable EİDS; Compliance/EİDS domain ownership)  
-**Gates resolved:** none of G-01–G-09 — legal/architecture record for D-010; does not select official APIs, fees, or onboarding (those remain OPEN / REQUIRES OFFICIAL VERIFICATION)
+**Gates resolved:** none of G-01–G-09 — legal/architecture record for D-010; does not select official APIs, fees, or onboarding (those remain OPEN / REQUIRES OFFICIAL VERIFICATION)  
+**Residency:** Geographic split of raw official data vs product decisions is **ADR-015** (🔒 FROZEN). This ADR is not superseded.
 
 ---
 
@@ -211,7 +212,11 @@ Must **not** put official sensitive bodies, national IDs, or secrets in audit `m
 
 ## 14. What data is stored vs not stored
 
-**Store (PostgreSQL Compliance):** subject type/id, kind, status, attempt ids, timestamps, expiry/revoke flags, official **reference tokens** if issued, correlation ids, adapter error **class**.
+**Store (PostgreSQL Compliance, Germany product DB):** subject type/id, kind, status, attempt ids, timestamps, expiry/revoke flags, KONUMLU correlation ids, adapter error **class**, and (per ADR-015) the **minimum signed decision** fields only.
+
+**Store (Türkiye Compliance Gateway DB):** official/provider transaction state, government tokens, raw or reconstructed official evidence as legally required. See [ADR-015](./ADR-015-tr-compliance-gateway-data-residency.md).
+
+Germany **must not** store official **reference/government tokens**, TCKN, or raw provider bodies (ADR-015 refines the earlier “official reference tokens if issued” line).
 
 **Do not store** unless official/legal rules later require (then a new decision):
 
@@ -227,7 +232,7 @@ Listing attributes needed to **form** a check (e.g. location, category) stay in 
 
 ## 15. Sensitive payload handling
 
-- In transit: only inside the infrastructure adapter (TLS as required by official docs — **OPEN**).
+- In transit: official payloads only on the TR gateway and official provider links (ADR-015). Germany receives the signed decision only. TLS as required by official docs — **OPEN**.
 - At rest: minimize; encrypt-at-rest follows platform DB standards (**OPEN** if official requires extra).
 - Logs: no payload bodies, no credentials, no raw official XML/JSON.
 - Support tools / Management Center: show status, ids, timestamps, error class — not raw official payloads by default.
@@ -270,7 +275,7 @@ Compliance records MAY include `expires_at` and revoke.
 
 - Every adapter call has a **timeout** (**OPEN** — do not invent ms).
 - Circuit breaker: after repeated retryable failures, **open = stop hammering**; outcomes remain pending/retryable, **never PASS**. Thresholds **OPEN**.
-- Degraded state is **visible pending**, not reduced assurance.
+- Degraded state is **visible pending**, not reduced assurance. TR gateway outage: main app stays up; new official verification unavailable; never PASS (ADR-015).
 - Worker lease must exceed provider timeout (ADR-003 lease OPEN).
 
 ---
@@ -374,7 +379,7 @@ These do **not** reopen D-010, Property≠Vehicle, no admin bypass, mock-vs-real
 
 1. **E-E001** Publish of regulated listings requires Compliance PASS per required kind.
 2. **E-E002** Admins cannot set PASS or skip the gate.
-3. **E-E003** Official I/O only in infrastructure adapters via outbox workers.
+3. **E-E003** Official I/O only in infrastructure adapters via outbox workers. Production official government I/O and raw payloads run on the **Türkiye Compliance Gateway** (ADR-015); Germany consumes a signed decision, never raw identity/provider bodies.
 4. **E-E004** Local mock implements the same interface; not wired in production.
 5. **E-E005** AI and Case Engine cannot verify EİDS.
 6. **E-E006** Do not embed official URLs or fee tables in domain code or this decision as facts.

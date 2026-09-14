@@ -98,7 +98,9 @@ Staff authenticates with `Authorization: Bearer` only. Consumer cookies and `X-S
 | POST | `/v1/listings/{listingId}/eids-verifications` | Owner start; CSRF; unconfigured provider = unavailable, never verified |
 | GET | `/v1/listings/{listingId}/eids-verification` | Owner read; non-owner privacy 404 |
 
-No admin bypass route exists.
+No admin bypass route exists. Client-supplied `approved=true` (or equivalent) is never authoritative.
+
+Germany must not receive TCKN, raw e-Devlet/EİDS bodies, government tokens, birth date, address, or full sensitive provider payloads. Official production I/O belongs on the Türkiye Compliance Gateway; Germany accepts only a TR-signed decision (`schema_version`, `verification_type`, `status`, `decision_id`, opaque `subject_ref`, `issued_at`, `valid_until`, `signature`) after signature, replay, schema, type, time, and subject-mapping checks. TR gateway HTTP is **not implemented** in this inventory. See [ADR-015](../ADR/ADR-015-tr-compliance-gateway-data-residency.md).
 
 ## Verified
 

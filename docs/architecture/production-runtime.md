@@ -4,7 +4,7 @@ Vendor-neutral process topology, configuration, health, and operations expectati
 
 ## Topology (minimum production processes)
 
-Do not split domains into separate deployable services. The Go backend remains a modular monolith.
+Do not split marketplace domains into separate deployable services. The Go backend remains a modular monolith **in Germany**. The Türkiye Compliance Gateway (ADR-015) is a **residency/compliance** process, not a listings/search/messaging microservice.
 
 | Process / component | Role |
 |---|---|
@@ -15,7 +15,8 @@ Do not split domains into separate deployable services. The Go backend remains a
 | S3-compatible object storage | Media objects behind `internal/infrastructure/storage` |
 | Consumer web (`web/apps/consumer`) | Public Next.js app |
 | Admin web (`web/apps/admin`) | Management Center Next.js app |
-| External providers | Staff IdP, EİDS, email/SMS, malware/moderation, PSP — only when configured |
+| External providers | Staff IdP, email/SMS, malware/moderation, PSP — only when configured |
+| Türkiye Compliance Gateway | Separate Türkiye-hosted process + PostgreSQL for official EİDS/e-Devlet I/O, sensitive evidence, and **signed verification decisions**. Not a general app server. Source of truth: [ADR-015](../ADR/ADR-015-tr-compliance-gateway-data-residency.md) (🔒 FROZEN). |
 
 `cmd/migrate` is an explicit operator CLI. Applications do not auto-run migrations on startup.
 
@@ -35,7 +36,7 @@ Unset `APP_ENV` loads as `development`. Invalid values fail process start. Stagi
 
 **Optional:** `HTTP_ADDR` (default `:8080`), `SHUTDOWN_TIMEOUT` (default `10s`), `DB_CONNECT_TIMEOUT` (default `5s`), `DB_MAX_CONNS` / `DB_MIN_CONNS` / `DB_MAX_CONN_LIFETIME` / `DB_MAX_CONN_IDLE_TIME`, `LOG_LEVEL` (default `info`), notification channel modes (default `disabled`), media scanner requirement flags, staff IdP triple (issuer/audience/JWKS).
 
-**Provider-dependent / AUTH launch blockers:** Production HumanChallenge vendor is not selected (`IDENTITY_HUMAN_CHALLENGE_PROVIDER=unconfigured` fail-closed when operations are required; `fake` rejected in staging/production). `NOTIFICATIONS_EMAIL_MODE` / `NOTIFICATIONS_SMS_MODE`=`external` requires a registered adapter at worker start; `disabled` never marks delivery sent. `STAFF_IDP_*` (complete or empty; partial fails closed; adapter still required to register staff HTTP), EİDS official adapter (unconfigured gateway returns unavailable, never verified), object-storage workload identity (config path exists; client wiring waits hosting).
+**Provider-dependent / AUTH launch blockers:** Production HumanChallenge vendor is not selected (`IDENTITY_HUMAN_CHALLENGE_PROVIDER=unconfigured` fail-closed when operations are required; `fake` rejected in staging/production). `NOTIFICATIONS_EMAIL_MODE` / `NOTIFICATIONS_SMS_MODE`=`external` requires a registered adapter at worker start; `disabled` never marks delivery sent. `STAFF_IDP_*` (complete or empty; partial fails closed; adapter still required to register staff HTTP), EİDS official adapter (unconfigured = unavailable, never verified; production official I/O and raw payloads belong on the TR Compliance Gateway per ADR-015), object-storage workload identity (config path exists; client wiring waits hosting).
 
 Process start logs `auth_provider_launch_blocked` with `human_challenge_vendor`, `email_vendor`, and/or `sms_vendor` when those adapters are not production-wired. See `docs/operations/AUTH-SECURITY.md`.
 
@@ -50,11 +51,13 @@ No secret defaults. Config `String` / slog representations omit URLs, keys, and 
 | `GET /healthz` | Liveness. Process is up. No DB, Valkey, storage, or vendor checks. |
 | `GET /readyz` | Readiness. PostgreSQL + PostGIS, and Valkey when `VALKEY_URL` is set. Body never includes check errors. |
 
-External provider outage (EİDS, email/SMS, staff IdP, object storage) is not process death. Liveness stays OK. Readiness does not probe those vendors. Request handling already fails closed or degrades per domain (auth rate-limit/session Valkey semantics, media 503, EİDS unavailable, staff routes unregistered).
+External provider outage (EİDS / TR Compliance Gateway, email/SMS, staff IdP, object storage) is not Germany process death. Liveness stays OK. Readiness does not probe those vendors. Request handling already fails closed or degrades per domain (auth rate-limit/session Valkey semantics, media 503, EİDS unavailable **not verified**, staff routes unregistered). If the TR gateway is down: main KONUMLU should keep serving non-verification traffic; **new** government/EİDS verification is unavailable; **no fail-open** (ADR-015).
 
 ## Data stores
 
-**PostgreSQL/PostGIS:** source of truth. Pool bounds are optional env (`DB_MAX_*`). Migrations: `go run ./cmd/migrate up` (or `down 1` / `version`) only. No destructive auto-migrate on boot.
+**PostgreSQL/PostGIS (Germany):** source of truth for the main platform. Pool bounds are optional env (`DB_MAX_*`). Migrations: `go run ./cmd/migrate up` (or `down 1` / `version`) only. No destructive auto-migrate on boot.
+
+**PostgreSQL (Türkiye Compliance Gateway):** separate database in Türkiye. Not a replica of Germany. No cross-country DB connection. Stores sensitive verification/provider state. Germany stores only the minimum signed decision (ADR-015).
 
 **Valkey:** non-durable. No persistence assumption. When unavailable: auth abuse / issuance rate limits fail closed (`unavailable`); human challenge, when required, fails closed; **step-up elevation fails closed** (require recent-strong again; never grant); **first-passkey bootstrap fails closed** (never grant enrollment authority); session hot cache still rehydrates from PostgreSQL; never reconstruct business truth from Valkey. See `docs/architecture/auth-abuse.md`, `docs/architecture/auth-session.md`, and `docs/operations/AUTH-SECURITY.md`.
 
@@ -69,11 +72,11 @@ PostgreSQL transactional outbox + `cmd/worker` poller. A second bounded poll loo
 ## Observability and security
 
 - JSON structured logs (`log/slog`), request id (`X-Request-Id`), no-op metrics/tracing hooks (no vendor SDK, no OpenTelemetry dependency until chosen).
-- Access logs: method, path, status, duration, request id. No cookies, Authorization, or bodies.
+- Access logs: method, path, status, duration, request id. No cookies, Authorization, or bodies. EİDS/TR logs: `request_id` / `decision_id` / type / result **class** / latency / HTTP status only — never TCKN, tokens, birth date, address, or raw provider bodies (ADR-015).
 - Trusted proxies: explicit CIDRs. Untrusted peers never honor `X-Forwarded-For`.
 - Browser cookies remain `__Host-`, HttpOnly, Secure, SameSite=Lax.
 - Allowed origins: WebAuthn/CORS origin list; required in staging/production.
-- Staff auth fail-closed without a registered IdP adapter. EİDS fail-closed (unconfigured = unavailable, not verified). No debug/admin bypasses.
+- Staff auth fail-closed without a registered IdP adapter. EİDS fail-closed (unconfigured = unavailable, not verified; TR outage = unavailable, not verified). No debug/admin bypasses.
 
 ## Deployment images
 
@@ -83,7 +86,8 @@ PostgreSQL transactional outbox + `cmd/worker` poller. A second bounded poll loo
 
 Operator runbook: `docs/operations/BACKUP-RESTORE.md`. Logical backup restore is proven locally; production PITR (WAL archive + base backup) remains a hosting implementation step.
 
-- PostgreSQL: automated backups plus point-in-time recovery. Retention is a hosting decision.
+- PostgreSQL (Germany): automated backups plus point-in-time recovery. Retention is a hosting decision. Do **not** automatically back up the TR Compliance Gateway database to Germany.
+- PostgreSQL (TR Compliance Gateway): encrypted backups **inside Türkiye**, keys not stored beside objects. Retention duration is a legal/product decision. See ADR-015.
 - Object storage: provider durability plus versioning for media buckets. Retention is a hosting decision. PostgreSQL backup does **not** include S3/MinIO objects.
 - Valkey is not a backup source and must not be restored as truth.
 - Restore procedure (DB PITR + object restore + migrate version check + smoke `/healthz`/`/readyz`) must be tested before production launch.
@@ -102,6 +106,6 @@ GitHub Actions full pipeline is not introduced by this foundation. No automatic 
 
 ## Remaining hosting / provider decisions
 
-Cloud vendor; Kubernetes (not required for V1); OpenTofu/Terraform provider; object-storage product and workload-identity wiring; Staff IdP vendor; official EİDS adapter; email/SMS vendors; push/notification delivery vendors; CDN for processed media; backup retention numbers.
+Cloud vendor; Kubernetes (not required for V1); OpenTofu/Terraform provider; object-storage product and workload-identity wiring; Staff IdP vendor; official EİDS adapter onboarding (TR gateway implementation is ADR-015 freeze, not code); email/SMS vendors; push/notification delivery vendors; CDN for processed media (must not sit in front of raw government-provider traffic); backup retention numbers (including TR legal retention).
 
 Notification **policy, planning, marketplace producers, and provider-neutral dispatch** live in `internal/notifications` plus domain outbox events. Email/SMS/push vendors are not selected. Unconfigured adapters never mark `accepted`. Push endpoints are not stored. See `docs/architecture/notifications-policy.md` and `docs/operations/NOTIFICATIONS.md`.

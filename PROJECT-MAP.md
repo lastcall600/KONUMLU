@@ -32,7 +32,7 @@ All documentation that is not a root orientation file lives under `/docs/`.
 | File | Purpose |
 |---|---|
 | `INDEX.md` | Index of all ADRs by number, title, status, and date |
-| `ADR-NNN-title.md` | Individual ADR files (NNN = zero-padded number) |
+| `ADR-NNN-title.md` | Individual ADR files (NNN = zero-padded number). Latest accepted: [ADR-015](./docs/ADR/ADR-015-tr-compliance-gateway-data-residency.md) Türkiye Compliance Gateway / data residency (🔒 FROZEN). |
 
 ADRs follow the format: context � decision � consequences � status.
 
@@ -46,7 +46,7 @@ Detailed architecture diagrams, domain interaction sequence diagrams, data flow 
 | `slice-b.md` | Slice B end-to-end flow detail (need — messaging) |
 | `outbox-design.md` | Transactional outbox schema and relay design detail |
 | `auth-flow.md` | Passkey and password authentication flow diagrams |
-| `production-runtime.md` | Production process topology, config/fail-closed rules, health, backup/restore pointers, promotion gates (no cloud vendor) |
+| `production-runtime.md` | Production process topology, config/fail-closed rules, health, backup/restore pointers, promotion gates (no cloud vendor). TR Compliance Gateway residency: [ADR-015](./docs/ADR/ADR-015-tr-compliance-gateway-data-residency.md). |
 | `auth-abuse.md` | AUTH-A Identity abuse primitives: multi-dimensional Valkey rate limits, RiskDecision, HumanChallenge port (no production vendor). AUTH-C security events + provider launch blockers. |
 | `auth-session.md` | AUTH-B session lifecycle, idle Touch, security-center HTTP, passkey management, Step-Up, first-passkey bootstrap (Valkey, fail-closed). AUTH-C outbox security events. |
 | `notifications-policy.md` | NOTIFY-A catalog/consent/inbox plus NOTIFY-B marketplace producers, dispatcher claim/retry, push deferred (no 000053). |
@@ -58,7 +58,7 @@ Detailed architecture diagrams, domain interaction sequence diagrams, data flow 
 
 | File | Purpose |
 |---|---|
-| `BACKUP-RESTORE.md` | PostgreSQL backup model, local restore drill, PITR production requirements (no cloud vendor in app code) |
+| `BACKUP-RESTORE.md` | PostgreSQL backup model, local restore drill, PITR production requirements (no cloud vendor in app code). Sensitive TR Compliance Gateway backups stay in Türkiye ([ADR-015](./docs/ADR/ADR-015-tr-compliance-gateway-data-residency.md)). |
 | `AUTH-SECURITY.md` | Consumer auth security operations: stuffing, HumanChallenge/email/SMS/Valkey outage, takeover, secret rotation |
 | `NOTIFICATIONS.md` | Notification producer/dispatch operations: unconfigured providers, claim/retry, destinations not logged |
 
