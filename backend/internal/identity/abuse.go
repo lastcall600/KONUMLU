@@ -7,6 +7,7 @@ import (
 	"errors"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -223,7 +224,17 @@ func (e *AbuseEngine) evaluateChallenge(ctx context.Context, sub AbuseSubject) R
 			Provider:  e.verifier.Name(),
 		}
 	}
-	if expectedHost := strings.TrimSpace(e.challenge.Hostname); expectedHost != "" && !strings.EqualFold(strings.TrimSpace(sub.Hostname), expectedHost) {
+	if utf8.RuneCountInString(token) > MaxHumanChallengeTokenLength {
+		return RiskOutcome{
+			Decision:    RiskChallenge,
+			Reason:      ReasonChallengeFailed,
+			Operation:   sub.Operation,
+			Challenged:  true,
+			Provider:    e.verifier.Name(),
+			ChallengeOK: false,
+		}
+	}
+	if len(e.challenge.hostnameAllowlist()) > 0 && !e.challenge.AllowsHostname(sub.Hostname) {
 		return RiskOutcome{
 			Decision:    RiskChallenge,
 			Reason:      ReasonChallengeFailed,

@@ -40,7 +40,9 @@ func (c Config) ProductionLike() bool {
 // These do not crash the process; they are explicit launch blockers.
 func (c Config) AuthProviderLaunchBlockers() []string {
 	var out []string
-	out = append(out, "human_challenge_vendor")
+	if !c.HumanChallenge.ProductionWired() {
+		out = append(out, "human_challenge_vendor")
+	}
 	if c.NotificationsEmailMode != NotificationChannelExternal {
 		out = append(out, "email_vendor")
 	}
@@ -210,6 +212,41 @@ func gateHumanChallenge(cfg *Config) error {
 	}
 	if required && cfg.HumanChallenge.ReplayTTL <= 0 {
 		return fmt.Errorf("%s must be greater than zero when challenge operations are set", envHumanChallengeReplayTTL)
+	}
+	if provider == "turnstile" {
+		if strings.TrimSpace(cfg.HumanChallenge.TurnstileSecret) == "" {
+			return fmt.Errorf("%s is required when provider is turnstile", envTurnstileSecret)
+		}
+		if err := validateTurnstileHostnames(cfg.HumanChallenge.AllowedHostnames, true); err != nil {
+			return err
+		}
+		if cfg.HumanChallenge.Timeout <= 0 {
+			return fmt.Errorf("%s must be greater than zero when provider is turnstile", envHumanChallengeTimeout)
+		}
+	}
+	if strings.Contains(fmt.Sprintf("%v", cfg.HumanChallenge), cfg.HumanChallenge.TurnstileSecret) && strings.TrimSpace(cfg.HumanChallenge.TurnstileSecret) != "" {
+		return fmt.Errorf("%s must not appear in config stringers", envTurnstileSecret)
+	}
+	return nil
+}
+
+func validateTurnstileHostnames(hosts []string, required bool) error {
+	cleaned := make([]string, 0, len(hosts))
+	for _, raw := range hosts {
+		h := strings.TrimSpace(raw)
+		if h == "" {
+			continue
+		}
+		if strings.Contains(h, "*") {
+			return fmt.Errorf("%s must be an exact hostname allowlist (no wildcards)", envHumanChallengeHostname)
+		}
+		if strings.ContainsAny(h, " \t:/?\\") || strings.Contains(h, "://") {
+			return fmt.Errorf("%s must contain hostnames only", envHumanChallengeHostname)
+		}
+		cleaned = append(cleaned, h)
+	}
+	if required && len(cleaned) == 0 {
+		return fmt.Errorf("%s must be a non-empty exact hostname allowlist when Turnstile is enabled", envHumanChallengeHostname)
 	}
 	return nil
 }

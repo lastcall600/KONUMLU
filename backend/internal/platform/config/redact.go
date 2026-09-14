@@ -24,6 +24,9 @@ func (c Config) LogValue() slog.Value {
 		slog.Bool("staff_dev_idp_enabled", c.StaffDevIDP.Enabled),
 		slog.String("human_challenge_provider", c.HumanChallenge.Provider),
 		slog.Int("human_challenge_operations", len(c.HumanChallenge.Operations)),
+		slog.Int("human_challenge_hostnames", len(c.HumanChallenge.AllowedHostnames)),
+		slog.Bool("turnstile_sitekey_configured", c.HumanChallenge.TurnstileSiteKey != ""),
+		slog.Bool("turnstile_secret_configured", c.HumanChallenge.TurnstileSecret != ""),
 	)
 }
 

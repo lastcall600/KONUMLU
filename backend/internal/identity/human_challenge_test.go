@@ -3,6 +3,7 @@ package identity
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -53,6 +54,13 @@ func TestFakeHumanChallengeHostname(t *testing.T) {
 	})
 	if err != nil || !got.OK {
 		t.Fatalf("matching host: %+v %v", got, err)
+	}
+}
+
+func TestNewHumanChallengeVerifierRejectsTurnstileConstruction(t *testing.T) {
+	_, err := NewHumanChallengeVerifier(HumanChallengeProviderTurnstile)
+	if err == nil || !errors.Is(err, errInvalidAbusePolicy) {
+		t.Fatalf("turnstile must be wired in infrastructure: %v", err)
 	}
 }
 
@@ -113,6 +121,27 @@ func TestChallengeProviderErrorFailsClosed(t *testing.T) {
 	}, PhaseChallenge)
 	if out.Allow() || out.Reason != ReasonProviderUnavailable {
 		t.Fatalf("timeout: %+v", out)
+	}
+}
+
+func TestOversizedChallengeTokenRejectedBeforeProvider(t *testing.T) {
+	ch := HumanChallengePolicy{
+		Provider:  HumanChallengeProviderFake,
+		Required:  map[AuthOperation]struct{}{AuthOpPasswordLogin: {}},
+		ReplayTTL: time.Minute,
+	}
+	eng, err := NewAbuseEngine(&memCounter{}, testAbusePolicy(t), ch, panicChallenge{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := eng.Evaluate(context.Background(), AbuseSubject{
+		Operation:      AuthOpPasswordLogin,
+		IP:             "192.0.2.4",
+		ChallengeToken: strings.Repeat("a", MaxHumanChallengeTokenLength+1),
+		Hostname:       "app.example.test",
+	}, PhaseChallenge)
+	if out.Allow() || out.Reason != ReasonChallengeFailed {
+		t.Fatalf("oversized: %+v", out)
 	}
 }
 

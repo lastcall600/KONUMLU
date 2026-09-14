@@ -51,6 +51,10 @@ const (
 	envHumanChallengeOperations     = "IDENTITY_HUMAN_CHALLENGE_OPERATIONS"
 	envHumanChallengeHostname       = "IDENTITY_HUMAN_CHALLENGE_HOSTNAME"
 	envHumanChallengeReplayTTL      = "IDENTITY_HUMAN_CHALLENGE_REPLAY_TTL"
+	envHumanChallengeTimeout        = "IDENTITY_HUMAN_CHALLENGE_TIMEOUT"
+	envTurnstileSecret              = "IDENTITY_HUMAN_CHALLENGE_TURNSTILE_SECRET"
+	envTurnstileSiteKey             = "IDENTITY_HUMAN_CHALLENGE_TURNSTILE_SITEKEY"
+	defaultHumanChallengeTimeout    = 3 * time.Second
 	envChallengeTTL                 = "IDENTITY_VERIFICATION_CHALLENGE_TTL"
 	envChallengeMaxAttempts         = "IDENTITY_VERIFICATION_CHALLENGE_MAX_ATTEMPTS"
 	envChallengePhoneOTPDigits      = "IDENTITY_VERIFICATION_PHONE_OTP_DIGITS"
@@ -187,12 +191,30 @@ func (s StaffDevIDP) Complete() bool {
 }
 
 // HumanChallenge is the AUTH-A provider-neutral challenge configuration.
-// No vendor secrets live here. Production must not use the fake provider.
+// Production must not use the fake provider. Turnstile secret is never logged.
 type HumanChallenge struct {
-	Provider   string
-	Operations []string
-	Hostname   string
-	ReplayTTL  time.Duration
+	Provider         string
+	Operations       []string
+	Hostname         string
+	AllowedHostnames []string
+	ReplayTTL        time.Duration
+	Timeout          time.Duration
+	TurnstileSecret  string
+	TurnstileSiteKey string
+}
+
+func (h HumanChallenge) String() string {
+	return fmt.Sprintf("config.HumanChallenge{provider:%s operations:%d hostnames:%d}", h.Provider, len(h.Operations), len(h.AllowedHostnames))
+}
+
+func (h HumanChallenge) GoString() string {
+	return h.String()
+}
+
+func (h HumanChallenge) ProductionWired() bool {
+	return strings.EqualFold(strings.TrimSpace(h.Provider), "turnstile") &&
+		strings.TrimSpace(h.TurnstileSecret) != "" &&
+		len(h.AllowedHostnames) > 0
 }
 
 // Load reads configuration from environment variables.
@@ -515,9 +537,9 @@ func parseHumanChallenge(fallbackWindow time.Duration) (HumanChallenge, error) {
 		provider = "none"
 	}
 	switch provider {
-	case "none", "fake", "unconfigured":
+	case "none", "fake", "unconfigured", "turnstile":
 	default:
-		return HumanChallenge{}, fmt.Errorf("%s must be none, fake, or unconfigured", envHumanChallengeProvider)
+		return HumanChallenge{}, fmt.Errorf("%s must be none, fake, unconfigured, or turnstile", envHumanChallengeProvider)
 	}
 	ops := splitCommaList(os.Getenv(envHumanChallengeOperations))
 	known := map[string]struct{}{
@@ -544,11 +566,30 @@ func parseHumanChallenge(fallbackWindow time.Duration) (HumanChallenge, error) {
 			ttl = 10 * time.Minute
 		}
 	}
+	hosts := splitCommaList(os.Getenv(envHumanChallengeHostname))
+	hostname := ""
+	if len(hosts) > 0 {
+		hostname = hosts[0]
+	}
+	timeout := time.Duration(0)
+	if raw := strings.TrimSpace(os.Getenv(envHumanChallengeTimeout)); raw != "" {
+		d, err := parsePositiveDuration(envHumanChallengeTimeout, raw)
+		if err != nil {
+			return HumanChallenge{}, err
+		}
+		timeout = d
+	} else if provider == "turnstile" {
+		timeout = defaultHumanChallengeTimeout
+	}
 	return HumanChallenge{
-		Provider:   provider,
-		Operations: ops,
-		Hostname:   strings.TrimSpace(os.Getenv(envHumanChallengeHostname)),
-		ReplayTTL:  ttl,
+		Provider:         provider,
+		Operations:       ops,
+		Hostname:         hostname,
+		AllowedHostnames: hosts,
+		ReplayTTL:        ttl,
+		Timeout:          timeout,
+		TurnstileSecret:  strings.TrimSpace(os.Getenv(envTurnstileSecret)),
+		TurnstileSiteKey: strings.TrimSpace(os.Getenv(envTurnstileSiteKey)),
 	}, nil
 }
 

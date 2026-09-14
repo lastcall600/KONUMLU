@@ -180,6 +180,10 @@ func TestProductionRequiresWorkerConcurrencySet(t *testing.T) {
 
 func TestConfigLogValueOmitsSecrets(t *testing.T) {
 	setProductionRequiredEnv(t)
+	t.Setenv(envHumanChallengeProvider, "turnstile")
+	t.Setenv(envHumanChallengeOperations, "password_login")
+	t.Setenv(envTurnstileSecret, "turnstile-secret-must-not-leak")
+	t.Setenv(envHumanChallengeHostname, "app.example.test")
 	cfg, err := Load()
 	if err != nil {
 		t.Fatal(err)
@@ -188,10 +192,10 @@ func TestConfigLogValueOmitsSecrets(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(&b, nil))
 	logger.Info("boot", "config", cfg)
 	out := b.String()
-	if strings.Contains(out, "super-secret-db") || strings.Contains(out, "postgres://") || strings.Contains(out, "object-secret-xyz") {
+	if strings.Contains(out, "super-secret-db") || strings.Contains(out, "postgres://") || strings.Contains(out, "object-secret-xyz") || strings.Contains(out, "turnstile-secret-must-not-leak") {
 		t.Fatalf("log leaked secrets: %s", out)
 	}
-	if strings.Contains(cfg.String(), "super-secret-db") || strings.Contains(cfg.String(), "object-secret-xyz") {
+	if strings.Contains(cfg.String(), "super-secret-db") || strings.Contains(cfg.String(), "object-secret-xyz") || strings.Contains(cfg.String(), "turnstile-secret-must-not-leak") {
 		t.Fatalf("String leaked: %s", cfg.String())
 	}
 }
@@ -271,6 +275,61 @@ func TestHumanChallengeConfigGates(t *testing.T) {
 	}
 	if cfg.HumanChallenge.Provider != "unconfigured" {
 		t.Fatalf("provider = %q", cfg.HumanChallenge.Provider)
+	}
+
+	setBaseLoadEnv(t)
+	t.Setenv(envHumanChallengeOperations, "password_login")
+	t.Setenv(envHumanChallengeProvider, "turnstile")
+	if _, err := Load(); err == nil {
+		t.Fatal("required turnstile without secret must fail")
+	}
+
+	setBaseLoadEnv(t)
+	t.Setenv(envHumanChallengeOperations, "password_login")
+	t.Setenv(envHumanChallengeProvider, "turnstile")
+	t.Setenv(envTurnstileSecret, "turnstile-secret-must-not-leak")
+	if _, err := Load(); err == nil {
+		t.Fatal("required turnstile without hostname allowlist must fail")
+	}
+
+	setBaseLoadEnv(t)
+	t.Setenv(envHumanChallengeOperations, "password_login")
+	t.Setenv(envHumanChallengeProvider, "turnstile")
+	t.Setenv(envTurnstileSecret, "turnstile-secret-must-not-leak")
+	t.Setenv(envHumanChallengeHostname, "*.example.test")
+	if _, err := Load(); err == nil {
+		t.Fatal("wildcard hostname must fail")
+	}
+
+	setBaseLoadEnv(t)
+	t.Setenv(envHumanChallengeOperations, "password_login")
+	t.Setenv(envHumanChallengeProvider, "turnstile")
+	t.Setenv(envTurnstileSecret, "turnstile-secret-must-not-leak")
+	t.Setenv(envHumanChallengeHostname, "app.example.test,staging.example.test")
+	t.Setenv(envTurnstileSiteKey, "1x00000000000000000000AA")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("dev turnstile: %v", err)
+	}
+	if !cfg.HumanChallenge.ProductionWired() || cfg.HumanChallenge.Timeout <= 0 {
+		t.Fatalf("turnstile cfg = %+v", cfg.HumanChallenge)
+	}
+	if strings.Contains(cfg.String(), "turnstile-secret-must-not-leak") || strings.Contains(cfg.HumanChallenge.String(), "turnstile-secret-must-not-leak") {
+		t.Fatal("config string leaked turnstile secret")
+	}
+
+	setProductionRequiredEnv(t)
+	t.Setenv(envHumanChallengeProvider, "turnstile")
+	t.Setenv(envHumanChallengeOperations, "password_login")
+	t.Setenv(envTurnstileSecret, "turnstile-secret-must-not-leak")
+	t.Setenv(envHumanChallengeHostname, "app.example.test")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("production turnstile: %v", err)
+	}
+	got := strings.Join(cfg.AuthProviderLaunchBlockers(), ",")
+	if strings.Contains(got, "human_challenge_vendor") {
+		t.Fatalf("wired turnstile must not list human_challenge_vendor: %s", got)
 	}
 }
 

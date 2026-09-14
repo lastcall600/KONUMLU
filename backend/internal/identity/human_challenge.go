@@ -17,34 +17,39 @@ type HumanChallengeInput struct {
 	Hostname string
 }
 
+// MaxHumanChallengeTokenLength is the maximum accepted challenge token size.
+const MaxHumanChallengeTokenLength = 2048
+
 // HumanChallengeResult is the provider-neutral verification outcome.
 type HumanChallengeResult struct {
-	OK       bool
-	Action   HumanChallengeAction
-	Hostname string
+	OK           bool
+	Action       HumanChallengeAction
+	Hostname     string
+	FailureClass string
 }
 
 // HumanChallenge is the Identity port for human-challenge verification.
 // Domain code must not import vendor SDKs or vendor response structs.
 //
-// Production adapter contract (vendor is NOT selected in AUTH-C):
+// Production adapter contract:
 //   - token is verified server-side; frontend tokens are never trusted alone
-//   - expected action (AuthOperation) is bound
-//   - expected hostname/site is bound when the provider supports it
+//   - expected action is the server AuthOperation; the client cannot set it
+//   - expected hostname/site is bound against an exact allowlist
 //   - timeout, invalid token, malformed response, wrong action, and wrong
 //     hostname must not return OK
-//   - replay is provider single-use and/or Identity hashed-token replay
+//   - replay is provider single-use and Identity hashed-token replay
 //   - secrets and tokens are never logged
 //   - provider errors map to unavailable / not-OK; required challenge is fail-closed
 //
+// Cloudflare Turnstile is constructed in infrastructure, not here.
 // HumanChallenge is not identity verification and not Step-Up.
 type HumanChallenge interface {
 	Name() string
 	Verify(ctx context.Context, in HumanChallengeInput) (HumanChallengeResult, error)
 }
 
-// NewHumanChallengeVerifier returns the AUTH-A/C verifier for a named mode.
-// No production vendor (Turnstile or otherwise) is selected here.
+// NewHumanChallengeVerifier returns built-in verifiers. Turnstile is wired
+// at process start from infrastructure (stdlib Siteverify, no SDK).
 func NewHumanChallengeVerifier(provider string) (HumanChallenge, error) {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "", HumanChallengeProviderNone:
@@ -53,6 +58,8 @@ func NewHumanChallengeVerifier(provider string) (HumanChallenge, error) {
 		return FakeHumanChallenge{}, nil
 	case HumanChallengeProviderUnconfigured:
 		return UnconfiguredHumanChallenge{}, nil
+	case HumanChallengeProviderTurnstile:
+		return nil, errInvalidAbusePolicy
 	default:
 		return nil, errInvalidAbusePolicy
 	}

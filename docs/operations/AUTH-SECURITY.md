@@ -21,19 +21,19 @@ AUTH-A (abuse) and AUTH-B (session/step-up) remain in force. AUTH-C adds durable
 
 **Metrics/logs:** `auth_abuse` (`reason_code` `velocity_ip` / `velocity_account` / `velocity_target`); `auth_security_event` with `event_type=auth.rate_limit.triggered`; Valkey `identity:auth:rl:*` counters. No raw email/phone in keys or logs.
 
-**Temporary policy actions:** Tighten `IDENTITY_AUTH_*` windows via config/restart; enable HumanChallenge operations **only** with a real server-side verifier (not `fake` in staging/production). Scale Valkey/API as needed.
+**Temporary policy actions:** Tighten `IDENTITY_AUTH_*` windows via config/restart; enable HumanChallenge operations **only** with Turnstile (`IDENTITY_HUMAN_CHALLENGE_PROVIDER=turnstile`) or leave `unconfigured` (fail-closed). `fake` is rejected in staging/production. Scale Valkey/API as needed.
 
 **What NOT to do:** Do not disable Valkey abuse limits. Do not fail-open the limiter. Do not add Remember Me, JWT sessions, or browser fingerprinting. Do not treat these events as Trust.
 
 ## HumanChallenge provider outage
 
-**Expected fail policy:** When an operation is in `IDENTITY_HUMAN_CHALLENGE_OPERATIONS`, missing/invalid/timeout/wrong-action/wrong-host/replay → request fails closed (`403`/`503`). Token omission is not success.
+**Expected fail policy:** When an operation is in `IDENTITY_HUMAN_CHALLENGE_OPERATIONS`, missing/invalid/timeout/wrong-action/wrong-host/replay → request fails closed (`403`/`503`). Token omission is not success. Siteverify is one bounded attempt; do not retry spent tokens. V1 does not send `remoteip`.
 
 **Temporary response:** Leave provider `unconfigured` (fail-closed) or remove operations if challenge must not block login **only** with an explicit operator decision. `fake` is rejected in staging/production.
 
-**Recovery:** Restore vendor adapter (not selected in AUTH-C); confirm hostname/action binding; hashed replay keys in Valkey may require extra solves after flush (never privilege gain).
+**Recovery:** Restore Turnstile Siteverify (official endpoint); confirm hostname allowlist and server-owned action binding; hashed replay keys in Valkey may require extra solves after flush (never privilege gain). Production sitekey/secret live in the hosting secret store, not git.
 
-Vendor onboarding remains a **launch blocker**.
+Turnstile production widget credentials and the consumer widget remain **launch blockers**. Email and SMS vendors remain **launch blockers**. This is not the Türkiye Compliance Gateway.
 
 ## Email/SMS outage
 
@@ -61,7 +61,7 @@ Email and SMS vendors remain **launch blockers**.
 
 ## Secret compromise
 
-**Provider secret rotation:** Rotate HumanChallenge / email / SMS vendor secrets in the hosting secret store. Restart API/worker. AUTH-C does not store those secrets in Identity config.
+**Provider secret rotation:** Rotate Turnstile secret / email / SMS vendor secrets in the hosting secret store. Restart API/worker. Never log or commit production Turnstile secrets. The public sitekey may be placed in frontend config.
 
 **Session/key considerations:** Rotate verification material keyring with overlap (existing sealed challenges). Session cookies remain hashed at rest; mass revoke via password reset or epoch bump if a session-signing/hash assumption is broken (tokens are random opaque secrets, not JWTs).
 

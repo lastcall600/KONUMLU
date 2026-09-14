@@ -306,20 +306,22 @@ const (
 	HumanChallengeProviderNone         = "none"
 	HumanChallengeProviderFake         = "fake"
 	HumanChallengeProviderUnconfigured = "unconfigured"
+	HumanChallengeProviderTurnstile    = "turnstile"
 )
 
 // HumanChallengePolicy decides when a human challenge is required.
 // An empty Required set means no operation is challenged.
 type HumanChallengePolicy struct {
-	Provider   string
-	Required   map[AuthOperation]struct{}
-	Hostname   string
-	ReplayTTL  time.Duration
+	Provider         string
+	Required         map[AuthOperation]struct{}
+	Hostname         string
+	AllowedHostnames []string
+	ReplayTTL        time.Duration
 }
 
 func (p HumanChallengePolicy) Validate() error {
 	switch strings.ToLower(strings.TrimSpace(p.Provider)) {
-	case "", HumanChallengeProviderNone, HumanChallengeProviderFake, HumanChallengeProviderUnconfigured:
+	case "", HumanChallengeProviderNone, HumanChallengeProviderFake, HumanChallengeProviderUnconfigured, HumanChallengeProviderTurnstile:
 	default:
 		return errInvalidAbusePolicy
 	}
@@ -334,7 +336,50 @@ func (p HumanChallengePolicy) Validate() error {
 	if !p.RequiresAny() && p.ReplayTTL < 0 {
 		return errInvalidAbusePolicy
 	}
+	if p.ProviderName() == HumanChallengeProviderTurnstile && p.RequiresAny() {
+		if len(p.hostnameAllowlist()) == 0 {
+			return errInvalidAbusePolicy
+		}
+		for _, h := range p.hostnameAllowlist() {
+			if strings.Contains(h, "*") {
+				return errInvalidAbusePolicy
+			}
+		}
+	}
 	return nil
+}
+
+func (p HumanChallengePolicy) hostnameAllowlist() []string {
+	if len(p.AllowedHostnames) > 0 {
+		out := make([]string, 0, len(p.AllowedHostnames))
+		for _, h := range p.AllowedHostnames {
+			h = strings.TrimSpace(h)
+			if h != "" {
+				out = append(out, h)
+			}
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+	if h := strings.TrimSpace(p.Hostname); h != "" {
+		return []string{h}
+	}
+	return nil
+}
+
+func (p HumanChallengePolicy) AllowsHostname(host string) bool {
+	allowed := p.hostnameAllowlist()
+	if len(allowed) == 0 {
+		return true
+	}
+	host = strings.TrimSpace(host)
+	for _, h := range allowed {
+		if strings.EqualFold(host, h) {
+			return true
+		}
+	}
+	return false
 }
 
 func (p HumanChallengePolicy) RequiresAny() bool {

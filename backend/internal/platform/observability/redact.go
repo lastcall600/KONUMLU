@@ -46,6 +46,7 @@ var sensitiveKeyExact = map[string]struct{}{
 	"privatekey": {}, "passkey": {}, "credential": {},
 	"signupproof": {}, "resetproof": {}, "challengetoken": {},
 	"humanchallenge": {}, "humanchallengeresponse": {}, "providersecret": {},
+	"turnstilesecret": {}, "turnstileresponse": {},
 	"destination": {}, "verificationsecret": {},
 	"pushtoken": {}, "fcmtoken": {}, "apnstoken": {}, "deviceendpoint": {},
 	"consentpayload": {}, "consentevidence": {}, "consentip": {},
