@@ -27,6 +27,7 @@ var safeLogKeys = map[string]struct{}{
 	"notifypurpose": {}, "notificationevent": {}, "suppressionreason": {},
 	"deliveryoutcome": {}, "deliveryattempt": {}, "intentstatus": {},
 	"channelcode": {}, "intentid": {}, "deliveryid": {},
+	"endpointid": {}, "pushplatform": {}, "pushprovider": {},
 }
 
 var sensitiveKeyExact = map[string]struct{}{
@@ -50,6 +51,10 @@ var sensitiveKeyExact = map[string]struct{}{
 	"netgsmpassword": {}, "netgsmusername": {},
 	"destination": {}, "verificationsecret": {},
 	"pushtoken": {}, "fcmtoken": {}, "apnstoken": {}, "deviceendpoint": {},
+	"p256dh": {}, "webpushauth": {}, "webpushendpoint": {}, "endpointurl": {},
+	"pushendpoint": {}, "endpointciphertext": {}, "endpointnonce": {},
+	"pushendpointencryptionkey": {}, "pushendpointhashkey": {},
+	"encryptionkey": {}, "hashkey": {},
 	"consentpayload": {}, "consentevidence": {}, "consentip": {},
 	"notificationbody": {}, "messagecontent": {}, "renderedhtml": {},
 	"ceremonytoken": {}, "stepup": {}, "webauthnchallenge": {},

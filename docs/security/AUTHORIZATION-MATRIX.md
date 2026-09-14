@@ -216,6 +216,9 @@ Storage disabled → **503** on initiate (not an authz grant).
 | GET `/v1/notifications` | 401 | ALLOW (own inbox) | other user's items omitted |
 | POST `/v1/notifications/{id}/read` | 401 | ALLOW + CSRF; already-read OK | foreign id **404** |
 | POST `/v1/notifications/read-all` | 401 | ALLOW + CSRF (own unread) | does not touch other users |
+| POST `/v1/push-endpoints` | 401 | ALLOW + CSRF; body `userId` **400** | other user's active endpoint hash **409** |
+| GET `/v1/push-endpoints` | 401 | ALLOW (own active metadata) | other user's endpoints omitted |
+| DELETE `/v1/push-endpoints/{id}` | 401 | ALLOW + CSRF; already-revoked OK | foreign id **404** |
 
 Wrong origin / missing CSRF on notification mutations → **403**.
 

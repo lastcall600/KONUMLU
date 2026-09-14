@@ -16,13 +16,13 @@ type Dispatcher struct {
 	contacts  identitycontracts.NotificationContactResolver
 	email     ChannelSender
 	sms       ChannelSender
-	push      ChannelSender
+	push      *PushDispatch
 	cfg       DispatcherConfig
 	now       func() time.Time
 	wait      func(ctx context.Context, d time.Duration) error
 }
 
-func NewDispatcher(store *PostgresStore, material *Materializer, contacts identitycontracts.NotificationContactResolver, email, sms, push ChannelSender, cfg DispatcherConfig, now func() time.Time) (*Dispatcher, error) {
+func NewDispatcher(store *PostgresStore, material *Materializer, contacts identitycontracts.NotificationContactResolver, email, sms ChannelSender, push *PushDispatch, cfg DispatcherConfig, now func() time.Time) (*Dispatcher, error) {
 	if store == nil {
 		return nil, errStoreRequired
 	}
@@ -59,7 +59,7 @@ func (d *Dispatcher) configuredChannels() []policy.Channel {
 	if d.sms != nil {
 		out = append(out, policy.ChannelSMS)
 	}
-	if d.push != nil {
+	if d.push != nil && d.push.Sender != nil {
 		out = append(out, policy.ChannelWebPush, policy.ChannelMobilePush)
 	}
 	return out
@@ -148,8 +148,11 @@ func (d *Dispatcher) processOne(ctx context.Context, row ChannelDeliveryRow) err
 		return d.store.FinishChannelDelivery(ctx, row)
 	}
 	sender := d.sender(row.Channel)
-	if sender == nil {
+	if sender == nil && !isPushChannel(row.Channel) {
 		return d.parkUnconfigured(ctx, row, now)
+	}
+	if isPushChannel(row.Channel) {
+		return d.processPush(ctx, row, intent, now)
 	}
 	dest, destErr := d.resolveDestination(ctx, intent.RecipientUserID, row.Channel)
 	if destErr != nil {
@@ -251,6 +254,12 @@ func (d *Dispatcher) recheck(ctx context.Context, intent SemanticIntent, ch poli
 			}
 		}
 	}
+	if ok, err := d.store.HasActivePushEndpoint(ctx, intent.RecipientUserID, policy.ChannelWebPush); err == nil {
+		dest.WebPushReady = ok
+	}
+	if ok, err := d.store.HasActivePushEndpoint(ctx, intent.RecipientUserID, policy.ChannelMobilePush); err == nil {
+		dest.MobilePushReady = ok
+	}
 	resolution := policy.Resolve(policy.IntentInput{
 		RecipientUserID:        intent.RecipientUserID.String(),
 		EventType:              intent.EventType,
@@ -297,11 +306,84 @@ func (d *Dispatcher) sender(ch policy.Channel) ChannelSender {
 		return d.email
 	case policy.ChannelSMS:
 		return d.sms
-	case policy.ChannelWebPush, policy.ChannelMobilePush:
-		return d.push
 	default:
 		return nil
 	}
+}
+
+func isPushChannel(ch policy.Channel) bool {
+	return ch == policy.ChannelWebPush || ch == policy.ChannelMobilePush
+}
+
+func (d *Dispatcher) processPush(ctx context.Context, row ChannelDeliveryRow, intent SemanticIntent, now time.Time) error {
+	if d.push == nil || d.push.Sender == nil {
+		return d.parkUnconfigured(ctx, row, now)
+	}
+	if d.push.Endpoints == nil {
+		return d.parkUnconfigured(ctx, row, now)
+	}
+	targets, err := d.push.Endpoints.DispatchTargets(ctx, intent.RecipientUserID, row.Channel)
+	if err != nil {
+		return d.failRetryable(ctx, row, ErrorClassRetryable, now)
+	}
+	if len(targets) == 0 {
+		reason := policy.SuppressNoDestination
+		row.State = policy.DeliverySuppressed
+		row.SuppressionReason = &reason
+		row.UpdatedAt = now
+		row.CompletedAt = &now
+		row.NextAttemptAt = nil
+		return d.store.FinishChannelDelivery(ctx, row)
+	}
+	var lastRef string
+	for i := range targets {
+		targets[i].IdempotencyKey = row.ID.String()
+		targets[i].Payload = SafePushPayload(intent.TemplateKey, intent.DomainRef, string(intent.Purpose))
+		res, sendErr := d.push.Sender.Send(ctx, targets[i])
+		if sendErr != nil {
+			class, retryable, _ := ClassifyProviderError(sendErr)
+			if !retryable {
+				row.State = policy.DeliveryPermanentlyFailed
+				row.LastErrorClass = strptr(class)
+				row.UpdatedAt = now
+				row.CompletedAt = &now
+				row.NextAttemptAt = nil
+				return d.store.FinishChannelDelivery(ctx, row)
+			}
+			delay, giveUp := policy.BoundedBackoff(row.Attempts)
+			if giveUp {
+				row.State = policy.DeliveryPermanentlyFailed
+				row.LastErrorClass = strptr(class)
+				row.UpdatedAt = now
+				row.CompletedAt = &now
+				row.NextAttemptAt = nil
+				return d.store.FinishChannelDelivery(ctx, row)
+			}
+			next := now.Add(time.Duration(delay) * time.Second)
+			row.State = policy.DeliveryRetryableFailed
+			row.LastErrorClass = strptr(class)
+			row.NextAttemptAt = &next
+			row.UpdatedAt = now
+			return d.store.FinishChannelDelivery(ctx, row)
+		}
+		if res.ProviderRef != "" {
+			lastRef = res.ProviderRef
+		}
+	}
+	row.State = policy.DeliveryAccepted
+	if lastRef != "" {
+		ref := lastRef
+		row.ProviderRef = &ref
+	}
+	row.UpdatedAt = now
+	row.CompletedAt = &now
+	row.NextAttemptAt = nil
+	observability.FromContext(ctx).Info("notification_delivery_accepted",
+		"channel_code", string(row.Channel),
+		"intent_id", intent.ID.String(),
+		"delivery_outcome", string(policy.DeliveryAccepted),
+	)
+	return d.store.FinishChannelDelivery(ctx, row)
 }
 
 func (d *Dispatcher) failRetryable(ctx context.Context, row ChannelDeliveryRow, class string, now time.Time) error {

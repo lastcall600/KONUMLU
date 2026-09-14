@@ -85,6 +85,8 @@ const (
 	envNetgsmMsgHeader              = "NETGSM_MSGHEADER"
 	envNetgsmTimeout                = "NETGSM_TIMEOUT"
 	defaultNetgsmTimeout            = 5 * time.Second
+	envPushEndpointEncryptionKey    = "PUSH_ENDPOINT_ENCRYPTION_KEY"
+	envPushEndpointHashKey          = "PUSH_ENDPOINT_HASH_KEY"
 	envMediaMalwareScanRequired     = "MEDIA_MALWARE_SCAN_REQUIRED"
 	envMediaImageModerationRequired = "MEDIA_IMAGE_MODERATION_REQUIRED"
 	envStaffIDPIssuer               = "STAFF_IDP_ISSUER"
@@ -165,6 +167,9 @@ type Config struct {
 	// SMS is transactional/OTP Netgsm settings. Password is server-only and
 	// must never appear in String, GoString, slog, or error text.
 	SMS SMS
+	// PushEndpoints holds AES-256-GCM + HMAC keys for durable push tokens.
+	// Keys are never logged. Registration HTTP is enabled only when keys load.
+	PushEndpoints PushEndpoints
 	// Media scanner/moderation requirements. Vendors are not selected; required+missing is retryable.
 	MediaMalwareScanRequired     bool
 	MediaImageModerationRequired bool
@@ -215,6 +220,24 @@ func (s SMS) GoString() string { return s.String() }
 func (s SMS) NetgsmWired() bool {
 	return s.Provider == SMSProviderNetgsm && s.Username != "" && s.Password != "" && s.MsgHeader != "" && s.Timeout > 0
 }
+
+// PushEndpoints is application-level encryption for push provider material.
+// V1 loads one AES-256 encryption key and one HMAC key. Ciphertext is sealed
+// with key id "v1". A previous-key ring and automatic rotation are not
+// implemented: replacing PUSH_ENDPOINT_ENCRYPTION_KEY makes existing
+// ciphertext unreadable until clients re-register.
+type PushEndpoints struct {
+	Enabled       bool
+	EncryptionKey []byte
+	HashKey       []byte
+}
+
+func (p PushEndpoints) String() string {
+	return fmt.Sprintf("config.PushEndpoints{enabled:%t encryption_key_configured:%t hash_key_configured:%t}",
+		p.Enabled, len(p.EncryptionKey) == materialAESKeySize, len(p.HashKey) >= materialAESKeySize)
+}
+
+func (p PushEndpoints) GoString() string { return p.String() }
 
 // StaffIDP holds issuer/audience/JWKS for a future staff identity adapter.
 type StaffIDP struct {
@@ -541,6 +564,12 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	cfg.SMS = sms
+
+	push, err := parsePushEndpoints()
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.PushEndpoints = push
 
 	malwareReq, err := parseOptionalBool(envMediaMalwareScanRequired)
 	if err != nil {

@@ -2,7 +2,7 @@
 
 Provider-neutral product/privacy foundation for KONUMLU notifications. This document is **not** legal advice and does not encode unreviewed KVKK/İYS conclusions.
 
-**Package status:** NOTIFY-A frozen. NOTIFY-B producers + provider-neutral dispatch foundation: `NOTIFY_B_APPLICATION_READY_FOR_REVIEW`. Transactional email transport: Amazon SES (`PROVIDER-B`). Transactional/OTP SMS transport: Netgsm (`PROVIDER-C`). Push vendor remains unselected.
+**Package status:** NOTIFY-A frozen. NOTIFY-B producers + provider-neutral dispatch foundation: `NOTIFY_B_APPLICATION_READY_FOR_REVIEW`. NOTIFY-C push endpoint registry: `NOTIFY_C_APPLICATION_READY_FOR_REVIEW` (`000053`; encrypted storage; no vendor HTTP). Transactional email transport: Amazon SES (`PROVIDER-B`). Transactional/OTP SMS transport: Netgsm (`PROVIDER-C`). Push **transport** vendors remain unselected.
 
 Additive schema `000052_notifications_policy_core` is **unchanged after approval**. Preference/consent/inbox HTTP, PostgreSQL stores, AUTH-C selected-event materialization, and in-app channel planning are implemented. SES and Netgsm adapters exist; push remains unselected. This is **not** production notification readiness.
 
@@ -21,14 +21,15 @@ Additive schema `000052_notifications_policy_core` is **unchanged after approval
 | `notifications.intents` (000052) | Durable user-facing intent parent. |
 | `notifications.channel_deliveries` (000052) | Per-channel delivery/suppression lifecycle. |
 | `notifications.inbox_items` (000052) | In-app inbox row with `read_at`; composite FK to intent recipient. |
+| `notifications.push_endpoints` (000053) | User-owned web/Android/iOS endpoints. Encrypted provider material. Soft-revoke via `revoked_at`. |
 
-**Still absent:** durable push endpoint tables (deferred; no 000053), historical backfill, consumer UI, moderation warning cutover. SES and Netgsm adapters exist; production credentials remain operator-owned.
+**Still absent:** FCM/APNs/WebPush HTTP adapters, historical backfill, consumer UI, moderation warning cutover. SES and Netgsm adapters exist; production credentials remain operator-owned.
 
 ### Code
 
 - `internal/notifications` — legacy `notifications.intent` v1 and `notifications.moderation.warning` v1 unchanged; `DeliveryService` remains verification-only; `Materializer` plans 000052 rows; `Dispatcher` claims `channel_deliveries` (email/SMS/push) with SKIP LOCKED; AUTH-C + marketplace consumers materialize selected events.
 - `internal/notifications/policy` — one catalog remains authoritative. Durable model is `(channel, scope_type, scope_key)`. No row means catalog default. Stored `enabled=false` does not mute server-required channels.
-- `internal/notifications/httpapi` — session CSRF/Origin consumer APIs for preferences, consents, inbox. **No public send-notification API. No push registration HTTP.**
+- `internal/notifications/httpapi` — session CSRF/Origin consumer APIs for preferences, consents, inbox, and push endpoint register/list/revoke. **No public send-notification API.** List/revoke never return tokens, endpoint URLs, `p256dh`, or `auth`.
 - `internal/identity/contracts.NotificationEligibilityReader` — verified email/phone **booleans**. `NotificationContactResolver` returns a verified destination **in memory only** for the dispatcher (not HTTP, not stored, redacted in fmt).
 - `internal/infrastructure/notifications` — verification email/SMS bind (`disabled` / `external`).
 - `internal/infrastructure/email/ses` — Amazon SES API v2 `SendEmail` transport (AWS SDK v2). Not notification policy.
@@ -38,7 +39,7 @@ Additive schema `000052_notifications_policy_core` is **unchanged after approval
 - AUTH-C still emits `identity.auth.security` v1. Worker runs Identity audit logging then Notifications materialization as a **single sequential handler**.
 - `cmd/worker` also registers marketplace domain events and a sibling dispatcher poll loop (does not starve outbox `RunWorkers`).
 - Consumer web has **no** notification inbox/preferences UI.
-- No push token / device registration tables or HTTP.
+- No FCM/APNs/WebPush HTTP transport. Endpoint existence ≠ accepted delivery.
 
 ### Outbox types related to notification
 
@@ -65,6 +66,7 @@ Registered, session-owned:
 - `GET`/`PATCH /v1/notification-preferences`
 - `GET`/`POST /v1/notification-consents`
 - `GET /v1/notifications` (opaque cursor) · `POST /v1/notifications/{inboxId}/read` · `POST /v1/notifications/read-all`
+- `POST`/`GET /v1/push-endpoints` · `DELETE /v1/push-endpoints/{endpointId}`
 
 Mutations require Origin + CSRF. Session actor only; client `user_id` is rejected as an unknown field.
 
@@ -159,7 +161,7 @@ Resolution order (deterministic):
 1. Unknown event → suppress (`unknown_event`)
 2. Account policy (deleted: non-security suppressed; disabled: non-security suppressed; security may remain)
 3. Channel in catalog allow-list
-4. Destination eligibility (Identity-verified email/phone; push endpoint later)
+4. Destination eligibility (Identity-verified email/phone; active encrypted push endpoint for web/mobile push)
 5. Consent if `ConsentRequired` (missing / withdrawn win over preference=on)
 6. System-required channels skip user mute
 7. Global channel preference
@@ -219,11 +221,11 @@ Existing `notifications.intent` v1 stays for verification. Do not put verificati
 |---|---|---|
 | `in_app` | `accepted` only after inbox row commits in the same transaction | not sent externally (`accepted` ≠ read) |
 | `email` / `sms` | persist `pending` + `next_attempt_at` | provider-neutral `Dispatcher` claims with SKIP LOCKED; never fake success |
-| `web_push` / `mobile_push` | `suppressed` / `channel_unavailable` | no pending row without a destination; no endpoint table |
+| `web_push` / `mobile_push` | no active endpoint → `suppressed` / `channel_unavailable`; active endpoint → `pending` | `PushSender` claims only when a transport adapter is wired; registration alone never `accepted` |
 
-Claim: bounded batch, `FOR UPDATE SKIP LOCKED`, channels with a configured `ChannelSender` only. Unconfigured production adapters **do not claim** (rows stay `pending`; one operational log per poll loop). No Redis delivery truth.
+Claim: bounded batch, `FOR UPDATE SKIP LOCKED`, channels with a configured sender only. Unconfigured production adapters **do not claim** (rows stay `pending`; one operational log per poll loop). No Redis delivery truth.
 
-**Processing recovery without `lease_until`:** stranded `processing` rows are reclaimable when `updated_at <= now - processing_hold` (worker uses `OUTBOX_LEASE` as the hold). This is why 000053 was not required for dispatch.
+**Processing recovery without `lease_until`:** stranded `processing` rows are reclaimable when `updated_at <= now - processing_hold` (worker uses `OUTBOX_LEASE` as the hold). 000053 is the push-endpoint table, not a dispatch-lease column.
 
 No accepted → pending. No suppressed → accepted without a new plan.
 
@@ -263,7 +265,23 @@ Consent-required and optional channels are **re-checked at dispatch** (withdrawn
 
 ## 16. Push endpoints
 
-**Deferred (no 000053).** Inventory: no web/mobile push registration tables or HTTP exist. Dispatch currently **requires the original endpoint material**, so hashed-only storage is insufficient. A future migration must be provider-neutral (user-owned endpoints, encrypt-at-rest using the existing application keyring, revoked_at, multiple endpoints per user, no browser fingerprinting, no vendor column as domain truth). Until then `web_push`/`mobile_push` stay `channel_unavailable`.
+`notifications.push_endpoints` (migration `000053_notifications_push_endpoints`, additive, reversible). User-owned, not session-owned.
+
+**Combinations (model only):** `web_push`+`web`+`webpush`; `mobile_push`+`android`+`fcm`; `mobile_push`+`ios`+`apns`. Provider is transport metadata. Mobile vendor choice is not domain truth.
+
+**Storage:** provider material is AES-256-GCM (`PUSH_ENDPOINT_ENCRYPTION_KEY`). Lookup/dedupe uses keyed HMAC-SHA256 (`PUSH_ENDPOINT_HASH_KEY`) over `v1|channel|platform|provider|canonical_endpoint_identity`. For `web_push`, identity is the subscription endpoint URL (not p256dh/auth). For `mobile_push`, identity is the opaque provider token. Ciphertext is a versioned JSON payload (`webpush`: endpoint URL + p256dh + auth; `mobile`: opaque token). Same web endpoint with refreshed p256dh/auth updates ciphertext on the same row. Never plaintext FCM/APNs/Web Push secrets in PostgreSQL or logs. List HTTP returns id/channel/platform/provider/timestamps/revoked only. Endpoint URLs are never returned.
+
+**Uniqueness:** partial unique index on `endpoint_hash` where `revoked_at IS NULL`. Same user + same active endpoint refreshes `last_seen_at` and ciphertext (stable id). Multiple devices = multiple rows. Revoked rows may be reactivated for the same user. Cross-user active hash → HTTP 409 `conflict` (no silent takeover). V1 does not transfer ownership.
+
+**Logout:** Identity session revoke/logout does **not** revoke push endpoints. One physical browser/app endpoint can outlive session rotation. Explicit `DELETE /v1/push-endpoints/{id}` is the V1 revoke path. Future device/session binding may supersede this.
+
+**Dispatch:** no active endpoint → suppress `channel_unavailable`. Active endpoint → `pending`. Worker `PushSender` remains nil until a transport adapter is approved. Endpoint registration must not mark push `accepted`.
+
+**Payload privacy:** lock-screen / third-party-visible. Transport payload (future) may carry category, opaque reference id, template key, and generic title/body. Forbidden: message body, dispute evidence, contact info, address, payment data, TCKN, OTP, auth/reset tokens, raw listing private data.
+
+**Encryption key id:** `endpoint_key_id` is the AEAD key identifier written at seal time. V1 push wiring uses `crypto.NewSingleKey`, so the stored id is always `v1` (one active encryption key). A previous-key ring and automatic/manual rotation are **not implemented**. Replacing `PUSH_ENDPOINT_ENCRYPTION_KEY` makes existing ciphertext unreadable until clients re-register. Do not treat `endpoint_key_id` as evidence that rotation exists.
+
+**HTTP:** `POST/GET /v1/push-endpoints`, `DELETE /v1/push-endpoints/{endpointId}`. Mutations: session + CSRF + Origin. Client must not send `user_id`.
 
 ---
 
@@ -313,7 +331,7 @@ Staff IAM is unchanged; staff is not auto-granted inbox access.
 
 Safe fields: purpose, event type, suppression reason, delivery outcome, channel code, request/trace id.
 
-Never log: email, phone, push token, message body, consent evidence payload, OTP, session.
+Never log: email, phone, push token, Web Push endpoint URL, p256dh, auth secret, decrypted provider material, encryption keys, message body, consent evidence payload, OTP, session.
 
 ---
 
@@ -351,7 +369,7 @@ Push endpoints, provider workers, Messaging/Offers/Transactions producers, consu
 
 **`notifications.inbox_items`** — retain `user_id` for list/unread indexes. `UNIQUE (intent_id)`. **`FOREIGN KEY (intent_id, user_id) REFERENCES notifications.intents (id, recipient_user_id) ON DELETE NO ACTION`**.
 
-Keep `notifications.deliveries` for verification until a dedicated follow-up. Do not mix `verification_challenge` into inbox. `warning_intents` untouched. No push-token table. No historical backfill in 000052. No PostgreSQL ENUM. No retention interval.
+Keep `notifications.deliveries` for verification until a dedicated follow-up. Do not mix `verification_challenge` into inbox. `warning_intents` untouched. No historical backfill in 000052. No PostgreSQL ENUM. No retention interval. Push endpoints are **000053** (do not alter 000052).
 
 ### Current-consent query
 

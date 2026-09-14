@@ -11,6 +11,7 @@ import (
 
 	"backend/internal/notifications"
 	"backend/internal/notifications/policy"
+	"backend/internal/platform/crypto"
 	"backend/internal/platform/db"
 )
 
@@ -45,6 +46,7 @@ func TestLiveHTTPActorIsolationAndConsentHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM notifications.push_endpoints WHERE user_id = $1 OR user_id = $2`, userA, userB)
 		_, _ = pool.Exec(context.Background(), `DELETE FROM notifications.inbox_items WHERE user_id = $1 OR user_id = $2`, userA, userB)
 		_, _ = pool.Exec(context.Background(), `DELETE FROM notifications.channel_deliveries WHERE intent_id IN (SELECT id FROM notifications.intents WHERE recipient_user_id IN ($1,$2))`, userA, userB)
 		_, _ = pool.Exec(context.Background(), `DELETE FROM notifications.intents WHERE recipient_user_id IN ($1,$2)`, userA, userB)
@@ -138,5 +140,87 @@ func TestLiveHTTPActorIsolationAndConsentHistory(t *testing.T) {
 	rec = do(t, h, http.MethodPost, "/v1/notifications/"+box.Items[0].ID+"/read", allowedOrigin, map[string]any{}, authed("a"), withCSRF())
 	if rec.Code != http.StatusOK {
 		t.Fatalf("mark read = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestLiveHTTPPushEndpoints(t *testing.T) {
+	url := os.Getenv("DATABASE_URL")
+	if url == "" {
+		url = "postgres://konumlu:konumlu@127.0.0.1:5432/konumlu?sslmode=disable"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	pool, err := db.Open(ctx, url, 2*time.Second)
+	if err != nil {
+		t.Skip("postgres not configured")
+	}
+	if err := pool.Ready(ctx); err != nil {
+		pool.Close()
+		t.Skip("local postgres/postgis not reachable")
+	}
+	t.Cleanup(pool.Close)
+
+	kr, err := crypto.NewSingleKey(bytes.Repeat([]byte{0x11}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	aead, err := crypto.NewAEAD(kr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hmacKey, err := crypto.NewHMACKey(bytes.Repeat([]byte{0x22}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := notifications.NewPostgresStore(pool)
+	endpoints, err := notifications.NewEndpointService(store, aead, hmacKey, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc, err := notifications.NewConsumerService(store, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc = svc.WithEndpoints(endpoints)
+	userA, err := notifications.NewID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	userB, err := notifications.NewID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM notifications.push_endpoints WHERE user_id = $1 OR user_id = $2`, userA, userB)
+	})
+	h, err := New(fakeSessions{users: map[string]notifications.ID{"tok-a": userA, "tok-b": userB}}, svc, []string{allowedOrigin})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body := map[string]any{
+		"channel": "web_push", "platform": "web", "provider": "webpush",
+		"endpoint": "https://push.example.test/live-http-secret",
+		"p256dh":   "BNcRdreALRFGKhHy8pL7jHwGNBXne2j5ROqE5m8xN8wG1k2o3p4q5r6s7t8u9v0w1",
+		"auth":     "tBHItJI5svbpez7KI4CCXg",
+	}
+	rec := do(t, h, http.MethodPost, "/v1/push-endpoints", allowedOrigin, body, authed("a"), withCSRF())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("register = %d %s", rec.Code, rec.Body.String())
+	}
+	if bytes.Contains(rec.Body.Bytes(), []byte("live-http-secret")) || bytes.Contains(rec.Body.Bytes(), []byte("p256dh")) {
+		t.Fatalf("raw material: %s", rec.Body.String())
+	}
+	rec = do(t, h, http.MethodPost, "/v1/push-endpoints", allowedOrigin, body, authed("a"), withCSRF())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("idempotent = %d", rec.Code)
+	}
+	rec = do(t, h, http.MethodPost, "/v1/push-endpoints", allowedOrigin, body, authed("b"), withCSRF())
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("cross-user = %d %s", rec.Code, rec.Body.String())
+	}
+	rec = do(t, h, http.MethodGet, "/v1/push-endpoints", "", nil, authed("b"))
+	if rec.Code != http.StatusOK || bytes.Contains(rec.Body.Bytes(), []byte("web_push")) {
+		t.Fatalf("b list = %s", rec.Body.String())
 	}
 }

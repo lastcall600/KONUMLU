@@ -33,8 +33,6 @@ func mapPolicyDBErr(err error) error {
 	return errUnavailable
 }
 
-var errConflict = errors.New("notification conflict")
-
 const consentSelectCols = `id, user_id, consent_type, decision, policy_version, source, recorded_at, recorded_seq`
 
 func (p *PostgresStore) ListPreferenceSettings(ctx context.Context, userID ID) ([]policy.PreferenceSetting, error) {

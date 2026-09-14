@@ -93,6 +93,12 @@ func (m *Materializer) Materialize(ctx context.Context, in MaterializeInput) (Ma
 			}
 		}
 	}
+	if webReady, err := m.store.HasActivePushEndpoint(ctx, in.RecipientUserID, policy.ChannelWebPush); err == nil {
+		dest.WebPushReady = webReady
+	}
+	if mobileReady, err := m.store.HasActivePushEndpoint(ctx, in.RecipientUserID, policy.ChannelMobilePush); err == nil {
+		dest.MobilePushReady = mobileReady
+	}
 
 	resolution := policy.Resolve(policy.IntentInput{
 		RecipientUserID:        in.RecipientUserID.String(),
@@ -194,9 +200,9 @@ func (m *Materializer) Materialize(ctx context.Context, in MaterializeInput) (Ma
 				next := now
 				chRow.NextAttemptAt = &next
 			case policy.ChannelWebPush, policy.ChannelMobilePush:
-				chRow.State = policy.DeliverySuppressed
-				reason := policy.SuppressChannelUnavailable
-				chRow.SuppressionReason = &reason
+				chRow.State = policy.DeliveryPending
+				next := now
+				chRow.NextAttemptAt = &next
 			default:
 				chRow.State = policy.DeliverySuppressed
 				reason := policy.SuppressPolicy

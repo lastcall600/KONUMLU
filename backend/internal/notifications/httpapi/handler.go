@@ -36,6 +36,9 @@ type consumerAPI interface {
 	ListInbox(ctx context.Context, userID notifications.ID, cursorRaw string, limit int) (notifications.InboxPage, error)
 	MarkRead(ctx context.Context, userID, inboxID notifications.ID) (notifications.InboxRow, error)
 	MarkAllRead(ctx context.Context, userID notifications.ID) error
+	RegisterPushEndpoint(ctx context.Context, userID notifications.ID, in notifications.PushRegistration) (notifications.PushEndpointView, error)
+	ListPushEndpoints(ctx context.Context, userID notifications.ID) ([]notifications.PushEndpointView, error)
+	RevokePushEndpoint(ctx context.Context, userID, endpointID notifications.ID) (notifications.PushEndpointView, error)
 }
 
 type Handler struct {
@@ -70,6 +73,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/notifications", h.listInbox)
 	mux.HandleFunc("POST /v1/notifications/read-all", h.markAllRead)
 	mux.HandleFunc("POST /v1/notifications/{inboxId}/read", h.markRead)
+	mux.HandleFunc("POST /v1/push-endpoints", h.registerPush)
+	mux.HandleFunc("GET /v1/push-endpoints", h.listPush)
+	mux.HandleFunc("DELETE /v1/push-endpoints/{endpointId}", h.revokePush)
 }
 
 func (h *Handler) getPreferences(w http.ResponseWriter, r *http.Request) {
@@ -224,6 +230,62 @@ func (h *Handler) markAllRead(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, markAllDTO{OK: true})
 }
 
+func (h *Handler) registerPush(w http.ResponseWriter, r *http.Request) {
+	userID, ok := h.requireOriginSessionCSRF(w, r)
+	if !ok {
+		return
+	}
+	var req pushRegisterRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	in, err := req.toRegistration()
+	if err != nil {
+		writeNotifyError(w, err)
+		return
+	}
+	view, err := h.svc.RegisterPushEndpoint(r.Context(), userID, in)
+	if err != nil {
+		writeNotifyError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toPushDTO(view))
+}
+
+func (h *Handler) listPush(w http.ResponseWriter, r *http.Request) {
+	userID, ok := h.requireSession(w, r)
+	if !ok {
+		return
+	}
+	rows, err := h.svc.ListPushEndpoints(r.Context(), userID)
+	if err != nil {
+		writeNotifyError(w, err)
+		return
+	}
+	out := make([]pushEndpointDTO, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, toPushDTO(row))
+	}
+	writeJSON(w, http.StatusOK, pushListDTO{Endpoints: out})
+}
+
+func (h *Handler) revokePush(w http.ResponseWriter, r *http.Request) {
+	userID, ok := h.requireOriginSessionCSRF(w, r)
+	if !ok {
+		return
+	}
+	endpointID, ok := parseEndpointID(w, r)
+	if !ok {
+		return
+	}
+	view, err := h.svc.RevokePushEndpoint(r.Context(), userID, endpointID)
+	if err != nil {
+		writeNotifyError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toPushDTO(view))
+}
+
 type preferencePatchRequest struct {
 	Overrides []preferenceOverrideDTO `json:"overrides"`
 }
@@ -315,6 +377,74 @@ type inboxListDTO struct {
 
 type markAllDTO struct {
 	OK bool `json:"ok"`
+}
+
+type pushRegisterRequest struct {
+	Channel  string `json:"channel"`
+	Platform string `json:"platform"`
+	Provider string `json:"provider"`
+	Endpoint string `json:"endpoint,omitempty"`
+	P256dh   string `json:"p256dh,omitempty"`
+	Auth     string `json:"auth,omitempty"`
+	Token    string `json:"token,omitempty"`
+}
+
+func (r pushRegisterRequest) toRegistration() (notifications.PushRegistration, error) {
+	in := notifications.PushRegistration{
+		Channel:  policy.Channel(strings.TrimSpace(r.Channel)),
+		Platform: notifications.PushPlatform(strings.TrimSpace(r.Platform)),
+		Provider: notifications.PushProvider(strings.TrimSpace(r.Provider)),
+	}
+	switch in.Channel {
+	case policy.ChannelWebPush:
+		in.Web = &notifications.WebPushMaterial{Endpoint: r.Endpoint, P256dh: r.P256dh, Auth: r.Auth}
+	case policy.ChannelMobilePush:
+		in.Mobile = &notifications.MobilePushMaterial{Token: r.Token}
+	}
+	if err := notifications.ValidatePushRegistration(in); err != nil {
+		return notifications.PushRegistration{}, err
+	}
+	return in, nil
+}
+
+type pushEndpointDTO struct {
+	ID         string `json:"id"`
+	Channel    string `json:"channel"`
+	Platform   string `json:"platform"`
+	Provider   string `json:"provider"`
+	CreatedAt  string `json:"createdAt"`
+	LastSeenAt string `json:"lastSeenAt"`
+	Revoked    bool   `json:"revoked"`
+}
+
+type pushListDTO struct {
+	Endpoints []pushEndpointDTO `json:"endpoints"`
+}
+
+func toPushDTO(row notifications.PushEndpointView) pushEndpointDTO {
+	return pushEndpointDTO{
+		ID:         row.ID.String(),
+		Channel:    string(row.Channel),
+		Platform:   string(row.Platform),
+		Provider:   string(row.Provider),
+		CreatedAt:  row.CreatedAt.UTC().Format(time.RFC3339),
+		LastSeenAt: row.LastSeenAt.UTC().Format(time.RFC3339),
+		Revoked:    row.Revoked,
+	}
+}
+
+func parseEndpointID(w http.ResponseWriter, r *http.Request) (notifications.ID, bool) {
+	raw := strings.TrimSpace(r.PathValue("endpointId"))
+	if raw == "" || strings.Contains(raw, "..") || strings.ContainsAny(raw, "/\\") {
+		writeError(w, http.StatusNotFound, "not_found")
+		return notifications.ID{}, false
+	}
+	id, err := notifications.ParseID(raw)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not_found")
+		return notifications.ID{}, false
+	}
+	return id, true
 }
 
 type errorResponse struct {
@@ -442,6 +572,8 @@ func writeNotifyError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusForbidden, "forbidden")
 	case errors.Is(err, policy.ErrNotFound), errors.Is(err, notifications.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found")
+	case errors.Is(err, notifications.ErrEndpointConflict), errors.Is(err, notifications.ErrConflict):
+		writeError(w, http.StatusConflict, "conflict")
 	case errors.Is(err, policy.ErrInvalidActor):
 		writeError(w, http.StatusUnauthorized, "unauthenticated")
 	default:

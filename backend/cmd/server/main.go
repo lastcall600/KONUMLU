@@ -49,6 +49,7 @@ import (
 	paymentshttp "backend/internal/payments/httpapi"
 	"backend/internal/platform/cache"
 	"backend/internal/platform/config"
+	platcrypto "backend/internal/platform/crypto"
 	"backend/internal/platform/db"
 	"backend/internal/platform/health"
 	"backend/internal/platform/httpx"
@@ -872,6 +873,26 @@ func newNotificationsHTTP(pool *db.Pool, cfg config.Config, sessions *identity.S
 	svc, err := notifications.NewConsumerService(notifications.NewPostgresStore(pool), nil)
 	if err != nil {
 		return nil, err
+	}
+	if cfg.PushEndpoints.Enabled {
+		// V1: one encryption key, key id "v1". No previous-key ring.
+		kr, err := platcrypto.NewSingleKey(cfg.PushEndpoints.EncryptionKey)
+		if err != nil {
+			return nil, err
+		}
+		aead, err := platcrypto.NewAEAD(kr)
+		if err != nil {
+			return nil, err
+		}
+		hmacKey, err := platcrypto.NewHMACKey(cfg.PushEndpoints.HashKey)
+		if err != nil {
+			return nil, err
+		}
+		endpoints, err := notifications.NewEndpointService(notifications.NewPostgresStore(pool), aead, hmacKey, nil)
+		if err != nil {
+			return nil, err
+		}
+		svc = svc.WithEndpoints(endpoints)
 	}
 	return notifyhttp.New(identityNotificationSessions{sessions: sessions}, svc, cfg.WebAuthnRPOrigins)
 }

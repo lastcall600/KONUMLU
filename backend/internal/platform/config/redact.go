@@ -34,6 +34,9 @@ func (c Config) LogValue() slog.Value {
 		slog.Bool("netgsm_username_configured", c.SMS.Username != ""),
 		slog.Bool("netgsm_password_configured", c.SMS.Password != ""),
 		slog.Bool("netgsm_msgheader_configured", c.SMS.MsgHeader != ""),
+		slog.Bool("push_endpoints_enabled", c.PushEndpoints.Enabled),
+		slog.Bool("push_endpoint_encryption_key_configured", len(c.PushEndpoints.EncryptionKey) == 32),
+		slog.Bool("push_endpoint_hash_key_configured", len(c.PushEndpoints.HashKey) == 32),
 	)
 }
 
