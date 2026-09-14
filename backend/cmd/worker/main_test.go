@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"backend/internal/identity"
-	notifyinfra "backend/internal/infrastructure/notifications"
 	listingcontracts "backend/internal/listings/contracts"
 	locationcontracts "backend/internal/location/contracts"
 	"backend/internal/media"
@@ -263,7 +262,7 @@ func TestRunRequiresMaterialKeyConfig(t *testing.T) {
 	}
 }
 
-func TestRunFailsWhenExternalEmailAdapterMissing(t *testing.T) {
+func TestRunFailsWhenExternalEmailMissingSESConfig(t *testing.T) {
 	setWorkerRequiredEnv(t)
 	t.Setenv("NOTIFICATIONS_EMAIL_MODE", "external")
 	t.Setenv("NOTIFICATIONS_SMS_MODE", "disabled")
@@ -271,7 +270,7 @@ func TestRunFailsWhenExternalEmailAdapterMissing(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected startup error")
 	}
-	if !errors.Is(err, notifyinfra.ErrEmailAdapterRequired) {
+	if !strings.Contains(err.Error(), "EMAIL_PROVIDER") && !strings.Contains(err.Error(), "EMAIL_SES") {
 		t.Fatalf("err = %v", err)
 	}
 }

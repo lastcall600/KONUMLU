@@ -86,7 +86,7 @@ func TestNewHandlerRegistryDoesNotRegisterFakeProvider(t *testing.T) {
 		t.Fatal(err)
 	}
 	wiring := mustDisabledWiring(t, resolver)
-	if wiring.Email != nil || wiring.SMS != nil {
+	if wiring.Email != nil || wiring.SMS != nil || wiring.Channel != nil {
 		t.Fatal("cmd/worker production wiring must not include a fake email/SMS provider")
 	}
 	if _, ok := wiring.Resolver.(*identityMaterialResolver); !ok {

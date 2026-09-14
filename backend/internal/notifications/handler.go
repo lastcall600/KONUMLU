@@ -50,6 +50,10 @@ func (h *IntentHandler) Handle(ctx context.Context, event outbox.Event) error {
 		return errProviderRequired
 	}
 	if _, err := h.delivery.Deliver(ctx, stored); err != nil {
+		_, _, giveUp := ClassifyProviderError(err)
+		if giveUp {
+			return nil
+		}
 		return mapStoreErr(err)
 	}
 	return nil
@@ -107,7 +111,9 @@ func mapStoreErr(err error) error {
 		errors.Is(err, errInvalidEvent) || errors.Is(err, contracts.ErrInvalidIntent) ||
 		errors.Is(err, contracts.ErrSensitivePayload) ||
 		errors.Is(err, errMaterialUnusable) || errors.Is(err, errChannelMismatch) ||
-		errors.Is(err, errProviderRequired) {
+		errors.Is(err, errProviderRequired) ||
+		errors.Is(err, errProviderRetryable) || errors.Is(err, errProviderTimeout) ||
+		errors.Is(err, errProviderUnconfigured) || errors.Is(err, errProviderPermanent) {
 		return err
 	}
 	return errUnavailable

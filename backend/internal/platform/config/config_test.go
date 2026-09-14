@@ -369,6 +369,9 @@ func TestLoadNotificationChannelModes(t *testing.T) {
 	setMaterialKeyEnv(t)
 
 	t.Setenv(envNotificationsEmailMode, "external")
+	t.Setenv(envEmailProvider, "ses")
+	t.Setenv(envEmailSESRegion, "eu-central-1")
+	t.Setenv(envEmailSESFrom, "noreply@example.test")
 	t.Setenv(envNotificationsSMSMode, "DISABLED")
 	cfg, err := Load()
 	if err != nil {
@@ -376,6 +379,12 @@ func TestLoadNotificationChannelModes(t *testing.T) {
 	}
 	if cfg.NotificationsEmailMode != NotificationChannelExternal || cfg.NotificationsSMSMode != NotificationChannelDisabled {
 		t.Fatalf("modes = %q / %q", cfg.NotificationsEmailMode, cfg.NotificationsSMSMode)
+	}
+	if !cfg.Email.SESWired() || cfg.Email.Provider != EmailProviderSES {
+		t.Fatalf("email = %+v", cfg.Email)
+	}
+	if strings.Contains(cfg.Email.String(), "noreply@example.test") {
+		t.Fatal("email stringer must not dump From address")
 	}
 
 	t.Setenv(envNotificationsEmailMode, "noop")
@@ -499,5 +508,44 @@ func TestLoadStaffDevIDPCannotCombineWithStaffIDP(t *testing.T) {
 	t.Setenv(envStaffDevIDPRoles, "moderator")
 	if _, err := Load(); err == nil {
 		t.Fatal("expected combined staff IdP error")
+	}
+}
+
+func TestLoadEmailSESRequiresNonSecretSettings(t *testing.T) {
+	t.Setenv(envDatabaseURL, "postgres://konumlu:konumlu@127.0.0.1:5432/konumlu?sslmode=disable")
+	t.Setenv(envSessionIdle, "1h")
+	t.Setenv(envSessionAbsolute, "24h")
+	t.Setenv(envStepUpTTL, "5m")
+	t.Setenv(envWebAuthnCeremonyTTL, "2m")
+	setAuthRateLimitEnv(t)
+	setVerificationSignupEnv(t)
+	setOutboxEnv(t)
+	setMaterialKeyEnv(t)
+
+	t.Setenv(envNotificationsEmailMode, "external")
+	if _, err := Load(); err == nil {
+		t.Fatal("external email requires EMAIL_PROVIDER=ses")
+	}
+
+	t.Setenv(envEmailProvider, "ses")
+	t.Setenv(envEmailSESRegion, "")
+	t.Setenv(envEmailSESFrom, "noreply@example.test")
+	if _, err := Load(); err == nil {
+		t.Fatal("ses requires region")
+	}
+
+	t.Setenv(envEmailSESRegion, "eu-central-1")
+	t.Setenv(envEmailSESFrom, "")
+	if _, err := Load(); err == nil {
+		t.Fatal("ses requires from")
+	}
+
+	setProductionRequiredEnv(t)
+	t.Setenv(envNotificationsEmailMode, "external")
+	t.Setenv(envEmailProvider, "ses")
+	t.Setenv(envEmailSESRegion, "")
+	t.Setenv(envEmailSESFrom, "noreply@example.test")
+	if _, err := Load(); err == nil {
+		t.Fatal("production ses requires region")
 	}
 }

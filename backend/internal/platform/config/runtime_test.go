@@ -331,6 +331,22 @@ func TestHumanChallengeConfigGates(t *testing.T) {
 	if strings.Contains(got, "human_challenge_vendor") {
 		t.Fatalf("wired turnstile must not list human_challenge_vendor: %s", got)
 	}
+
+	t.Setenv(envNotificationsEmailMode, NotificationChannelExternal)
+	t.Setenv(envEmailProvider, EmailProviderSES)
+	t.Setenv(envEmailSESRegion, "eu-central-1")
+	t.Setenv(envEmailSESFrom, "noreply@example.test")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("production ses: %v", err)
+	}
+	got = strings.Join(cfg.AuthProviderLaunchBlockers(), ",")
+	if strings.Contains(got, "email_vendor") {
+		t.Fatalf("wired ses must not list email_vendor: %s", got)
+	}
+	if !strings.Contains(got, "sms_vendor") {
+		t.Fatalf("sms still blocked: %s", got)
+	}
 }
 
 func TestAuthProviderLaunchBlockersAreExplicit(t *testing.T) {

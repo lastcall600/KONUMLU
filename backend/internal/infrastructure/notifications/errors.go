@@ -28,7 +28,9 @@ func mapProviderError(err error) error {
 		return err
 	}
 	if errors.Is(err, domain.ErrInvalidDelivery) || errors.Is(err, domain.ErrProviderRequired) ||
-		errors.Is(err, domain.ErrUnavailable) {
+		errors.Is(err, domain.ErrUnavailable) ||
+		errors.Is(err, domain.ErrProviderRetryable) || errors.Is(err, domain.ErrProviderPermanent) ||
+		errors.Is(err, domain.ErrProviderTimeout) || errors.Is(err, domain.ErrProviderUnconfigured) {
 		return err
 	}
 	return domain.ErrUnavailable

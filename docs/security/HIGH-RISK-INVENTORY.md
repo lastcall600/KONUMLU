@@ -193,4 +193,4 @@ Session-owned consumer surfaces (CSRF+Origin on mutations; no client `user_id`):
 | POST | `/v1/notifications/{inboxId}/read` | Owner mark-one; foreign id 404; already-read idempotent |
 | POST | `/v1/notifications/read-all` | Owner unread only |
 
-Do not log destinations, OTP, consent payloads, message bodies, dispute evidence, or push tokens. Legacy verification send (`notifications.intent`) and moderation warning outbox remain. Marketplace notifications are produced only from server-owned domain outbox events (no public send API). See `docs/architecture/notifications-policy.md`.
+Do not log destinations, OTP, consent payloads, message bodies, dispute evidence, or push tokens. Legacy verification send (`notifications.intent`) and moderation warning outbox remain. Marketplace notifications are produced only from server-owned domain outbox events (no public send API). Transactional email transport is Amazon SES (`internal/infrastructure/email/ses`); SES MessageId is stored only on internal `ProviderRef` and is not a public API field. See `docs/architecture/notifications-policy.md`.

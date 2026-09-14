@@ -43,7 +43,7 @@ func (c Config) AuthProviderLaunchBlockers() []string {
 	if !c.HumanChallenge.ProductionWired() {
 		out = append(out, "human_challenge_vendor")
 	}
-	if c.NotificationsEmailMode != NotificationChannelExternal {
+	if c.NotificationsEmailMode != NotificationChannelExternal || !c.Email.SESWired() {
 		out = append(out, "email_vendor")
 	}
 	if c.NotificationsSMSMode != NotificationChannelExternal {

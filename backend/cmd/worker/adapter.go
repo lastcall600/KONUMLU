@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"backend/internal/identity"
+	emailses "backend/internal/infrastructure/email/ses"
 	notifyinfra "backend/internal/infrastructure/notifications"
 	objstorage "backend/internal/infrastructure/storage"
 	"backend/internal/listings"
@@ -28,23 +29,49 @@ type notificationsWiring struct {
 	Resolver notifications.VerificationMaterialResolver
 	Email    notifications.EmailSender
 	SMS      notifications.SMSSender
+	Channel  notifications.ChannelSender
 }
 
-func productionNotificationTransports() notifyinfra.Transports {
-	// Vendor clients are not selected. External mode must not start without one.
-	return notifyinfra.Transports{}
-}
-
-func bindNotificationSenders(cfg config.Config) (notifications.EmailSender, notifications.SMSSender, error) {
-	senders, err := notifyinfra.Bind(cfg.NotificationsEmailMode, cfg.NotificationsSMSMode, productionNotificationTransports())
-	if err != nil {
-		return nil, nil, err
+func productionNotificationTransports(cfg config.Config) (notifyinfra.Transports, notifications.ChannelSender, error) {
+	if cfg.NotificationsEmailMode != config.NotificationChannelExternal {
+		return notifyinfra.Transports{}, nil, nil
 	}
-	return senders.Email, senders.SMS, nil
+	if !cfg.Email.SESWired() {
+		return notifyinfra.Transports{}, nil, notifyinfra.ErrEmailAdapterRequired
+	}
+	tr, err := emailses.New(context.Background(), emailses.Config{
+		Region:  cfg.Email.Region,
+		From:    cfg.Email.From,
+		Timeout: cfg.Email.Timeout,
+	})
+	if err != nil {
+		return notifyinfra.Transports{}, nil, err
+	}
+	client, err := emailses.NewVerificationClient(tr)
+	if err != nil {
+		return notifyinfra.Transports{}, nil, err
+	}
+	channel, err := emailses.NewChannelClient(tr)
+	if err != nil {
+		return notifyinfra.Transports{}, nil, err
+	}
+	return notifyinfra.Transports{Email: client}, channel, nil
+}
+
+func bindNotificationSenders(cfg config.Config) (notifications.EmailSender, notifications.SMSSender, notifications.ChannelSender, error) {
+	transports, channel, err := productionNotificationTransports(cfg)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	senders, err := notifyinfra.Bind(cfg.NotificationsEmailMode, cfg.NotificationsSMSMode, transports)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return senders.Email, senders.SMS, channel, nil
 }
 
 func productionNotificationsWiring(cfg config.Config, resolver notifications.VerificationMaterialResolver) (notificationsWiring, error) {
-	email, sms, err := bindNotificationSenders(cfg)
+	email, sms, channel, err := bindNotificationSenders(cfg)
 	if err != nil {
 		return notificationsWiring{}, err
 	}
@@ -52,6 +79,7 @@ func productionNotificationsWiring(cfg config.Config, resolver notifications.Ver
 		Resolver: resolver,
 		Email:    email,
 		SMS:      sms,
+		Channel:  channel,
 	}, nil
 }
 
