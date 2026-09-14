@@ -238,6 +238,127 @@ func TestLivePushEndpointRegistry(t *testing.T) {
 	}
 }
 
+type scriptedPush struct {
+	calls int
+	errs  []error
+}
+
+func (s *scriptedPush) Send(_ context.Context, _ PushSendRequest) (SendResult, error) {
+	s.calls++
+	if len(s.errs) == 0 {
+		return SendResult{ProviderRef: "ok"}, nil
+	}
+	err := s.errs[0]
+	s.errs = s.errs[1:]
+	if err != nil {
+		return SendResult{}, err
+	}
+	return SendResult{ProviderRef: "ok"}, nil
+}
+
+func TestLivePushFanoutAggregation(t *testing.T) {
+	pool := liveNotifyPool(t)
+	ctx := context.Background()
+	store := NewPostgresStore(pool)
+	aead, hmacKey := testPushKeys(t)
+	svc, err := NewEndpointService(store, aead, hmacKey, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	user, err := NewID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { cleanupNotifyUser(context.Background(), pool, user) })
+
+	if _, err := svc.Register(ctx, user, webReg("https://push.example.test/fanout/a")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Register(ctx, user, webReg("https://push.example.test/fanout/b")); err != nil {
+		t.Fatal(err)
+	}
+
+	mat, err := NewMaterializer(store, staticDest{email: true}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	res, err := mat.Materialize(ctx, MaterializeInput{
+		RecipientUserID: user, EventType: policy.EventSecurityLoginNew, DomainRef: "push-fanout-1",
+		Variables: map[string]string{"created_at": now.Format(time.RFC3339)},
+	})
+	if err != nil || !res.Created {
+		t.Fatalf("materialize %+v err=%v", res, err)
+	}
+
+	sender := &scriptedPush{errs: []error{ErrProviderEndpointInvalid, nil}}
+	d, err := NewDispatcher(store, mat, nil, nil, nil, &PushDispatch{Web: sender, Endpoints: svc}, DispatcherConfig{BatchSize: 10, ProcessingHold: time.Second}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := d.ProcessBatch(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n == 0 {
+		t.Fatal("configured web push must claim")
+	}
+	if sender.calls != 2 {
+		t.Fatalf("both endpoints must be attempted, calls=%d", sender.calls)
+	}
+	chs, err := store.ListChannelDeliveries(ctx, res.Intent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ch := range chs {
+		if ch.Channel == policy.ChannelWebPush && ch.State != policy.DeliveryAccepted {
+			t.Fatalf("partial success must accept, state=%s", ch.State)
+		}
+	}
+	listed, err := svc.List(ctx, user)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 {
+		t.Fatalf("invalid endpoint must be revoked, remaining=%d", len(listed))
+	}
+
+	sender2 := &scriptedPush{errs: []error{ErrProviderRetryable, ErrProviderRetryable}}
+	d2, err := NewDispatcher(store, mat, nil, nil, nil, &PushDispatch{Web: sender2, Endpoints: svc}, DispatcherConfig{BatchSize: 10, ProcessingHold: time.Second}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res2, err := mat.Materialize(ctx, MaterializeInput{
+		RecipientUserID: user, EventType: policy.EventSecurityLoginNew, DomainRef: "push-fanout-2",
+		Variables: map[string]string{"created_at": now.Format(time.RFC3339)},
+	})
+	if err != nil || !res2.Created {
+		t.Fatalf("materialize2 %+v err=%v", res2, err)
+	}
+	if _, err := d2.ProcessBatch(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if sender2.calls != 1 {
+		t.Fatalf("one remaining endpoint, calls=%d", sender2.calls)
+	}
+	chs, err = store.ListChannelDeliveries(ctx, res2.Intent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ch := range chs {
+		if ch.Channel == policy.ChannelWebPush && ch.State != policy.DeliveryRetryableFailed {
+			t.Fatalf("retryable must not be hidden, state=%s", ch.State)
+		}
+	}
+	listed, err = svc.List(ctx, user)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 {
+		t.Fatalf("transient failure must not revoke, remaining=%d", len(listed))
+	}
+}
+
 func mustKey(t *testing.T, key []byte) *crypto.Keyring {
 	t.Helper()
 	kr, err := crypto.NewSingleKey(key)

@@ -90,6 +90,9 @@ func TestNewHandlerRegistryDoesNotRegisterFakeProvider(t *testing.T) {
 	if wiring.Email != nil || wiring.SMS != nil || wiring.ChannelEmail != nil || wiring.ChannelSMS != nil {
 		t.Fatal("cmd/worker production wiring must not include a fake email/SMS provider")
 	}
+	if wiring.PushWeb != nil || wiring.PushFCM != nil || wiring.PushAPNs != nil {
+		t.Fatal("cmd/worker production wiring must not include a fake push provider")
+	}
 	if _, ok := wiring.Resolver.(*identityMaterialResolver); !ok {
 		t.Fatal("worker resolver must be the Identity adapter")
 	}

@@ -645,3 +645,72 @@ func TestProductionRequiresPushEndpointKeys(t *testing.T) {
 		t.Fatal("production requires push endpoint keys")
 	}
 }
+
+func TestLoadPushTransportsOptionalAndSecrets(t *testing.T) {
+	t.Setenv(envDatabaseURL, "postgres://konumlu:konumlu@127.0.0.1:5432/konumlu?sslmode=disable")
+	t.Setenv(envSessionIdle, "1h")
+	t.Setenv(envSessionAbsolute, "24h")
+	t.Setenv(envStepUpTTL, "5m")
+	t.Setenv(envWebAuthnCeremonyTTL, "2m")
+	setAuthRateLimitEnv(t)
+	setVerificationSignupEnv(t)
+	setOutboxEnv(t)
+	setMaterialKeyEnv(t)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.WebPush.Wired() || cfg.FCM.Wired() || cfg.APNs.Wired() {
+		t.Fatal("push transports must stay optional")
+	}
+
+	t.Setenv(envWebPushVAPIDPublicKey, "vapid-public-example")
+	if _, err := Load(); err == nil {
+		t.Fatal("partial VAPID")
+	}
+	t.Setenv(envWebPushVAPIDPrivateKey, "vapid-private-must-not-leak")
+	t.Setenv(envWebPushVAPIDSubject, "mailto:ops@example.test")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.WebPush.Wired() {
+		t.Fatal("webpush")
+	}
+	if strings.Contains(cfg.String(), "vapid-private-must-not-leak") || strings.Contains(cfg.WebPush.String(), "vapid-private-must-not-leak") {
+		t.Fatal("vapid private leaked")
+	}
+
+	t.Setenv(envFCMCredentialsFile, "/tmp/fcm.json")
+	if _, err := Load(); err == nil {
+		t.Fatal("FCM file without project")
+	}
+	t.Setenv(envFCMProjectID, "konumlu-demo")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.FCM.Wired() {
+		t.Fatal("fcm")
+	}
+
+	t.Setenv(envAPNSTeamID, "TEAMID01")
+	if _, err := Load(); err == nil {
+		t.Fatal("partial APNs")
+	}
+	t.Setenv(envAPNSKeyID, "KEYID001")
+	t.Setenv(envAPNSTopic, "tr.konumlu.app")
+	t.Setenv(envAPNSPrivateKey, "-----BEGIN PRIVATE KEY-----\nsecret-apns-key\n-----END PRIVATE KEY-----")
+	t.Setenv(envAPNSEnvironment, "sandbox")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.APNs.Wired() || cfg.APNs.Environment != "sandbox" {
+		t.Fatalf("apns=%s", cfg.APNs.String())
+	}
+	if strings.Contains(cfg.String(), "secret-apns-key") || strings.Contains(cfg.APNs.String(), "secret-apns-key") {
+		t.Fatal("apns key leaked")
+	}
+}

@@ -11,15 +11,15 @@ import (
 )
 
 type Dispatcher struct {
-	store     *PostgresStore
-	material  *Materializer
-	contacts  identitycontracts.NotificationContactResolver
-	email     ChannelSender
-	sms       ChannelSender
-	push      *PushDispatch
-	cfg       DispatcherConfig
-	now       func() time.Time
-	wait      func(ctx context.Context, d time.Duration) error
+	store    *PostgresStore
+	material *Materializer
+	contacts identitycontracts.NotificationContactResolver
+	email    ChannelSender
+	sms      ChannelSender
+	push     *PushDispatch
+	cfg      DispatcherConfig
+	now      func() time.Time
+	wait     func(ctx context.Context, d time.Duration) error
 }
 
 func NewDispatcher(store *PostgresStore, material *Materializer, contacts identitycontracts.NotificationContactResolver, email, sms ChannelSender, push *PushDispatch, cfg DispatcherConfig, now func() time.Time) (*Dispatcher, error) {
@@ -59,8 +59,11 @@ func (d *Dispatcher) configuredChannels() []policy.Channel {
 	if d.sms != nil {
 		out = append(out, policy.ChannelSMS)
 	}
-	if d.push != nil && d.push.Sender != nil {
-		out = append(out, policy.ChannelWebPush, policy.ChannelMobilePush)
+	if d.push.webConfigured() {
+		out = append(out, policy.ChannelWebPush)
+	}
+	if d.push.mobileConfigured() {
+		out = append(out, policy.ChannelMobilePush)
 	}
 	return out
 }
@@ -316,17 +319,20 @@ func isPushChannel(ch policy.Channel) bool {
 }
 
 func (d *Dispatcher) processPush(ctx context.Context, row ChannelDeliveryRow, intent SemanticIntent, now time.Time) error {
-	if d.push == nil || d.push.Sender == nil {
+	if d.push == nil || d.push.Endpoints == nil {
 		return d.parkUnconfigured(ctx, row, now)
 	}
-	if d.push.Endpoints == nil {
+	if row.Channel == policy.ChannelWebPush && !d.push.webConfigured() {
 		return d.parkUnconfigured(ctx, row, now)
 	}
-	targets, err := d.push.Endpoints.DispatchTargets(ctx, intent.RecipientUserID, row.Channel)
+	if row.Channel == policy.ChannelMobilePush && !d.push.mobileConfigured() {
+		return d.parkUnconfigured(ctx, row, now)
+	}
+	endpoints, err := d.push.Endpoints.ListDispatchRows(ctx, intent.RecipientUserID, row.Channel)
 	if err != nil {
 		return d.failRetryable(ctx, row, ErrorClassRetryable, now)
 	}
-	if len(targets) == 0 {
+	if len(endpoints) == 0 {
 		reason := policy.SuppressNoDestination
 		row.State = policy.DeliverySuppressed
 		row.SuppressionReason = &reason
@@ -335,55 +341,95 @@ func (d *Dispatcher) processPush(ctx context.Context, row ChannelDeliveryRow, in
 		row.NextAttemptAt = nil
 		return d.store.FinishChannelDelivery(ctx, row)
 	}
-	var lastRef string
-	for i := range targets {
-		targets[i].IdempotencyKey = row.ID.String()
-		targets[i].Payload = SafePushPayload(intent.TemplateKey, intent.DomainRef, string(intent.Purpose))
-		res, sendErr := d.push.Sender.Send(ctx, targets[i])
-		if sendErr != nil {
-			class, retryable, _ := ClassifyProviderError(sendErr)
-			if !retryable {
-				row.State = policy.DeliveryPermanentlyFailed
-				row.LastErrorClass = strptr(class)
-				row.UpdatedAt = now
-				row.CompletedAt = &now
-				row.NextAttemptAt = nil
-				return d.store.FinishChannelDelivery(ctx, row)
-			}
-			delay, giveUp := policy.BoundedBackoff(row.Attempts)
-			if giveUp {
-				row.State = policy.DeliveryPermanentlyFailed
-				row.LastErrorClass = strptr(class)
-				row.UpdatedAt = now
-				row.CompletedAt = &now
-				row.NextAttemptAt = nil
-				return d.store.FinishChannelDelivery(ctx, row)
-			}
-			next := now.Add(time.Duration(delay) * time.Second)
-			row.State = policy.DeliveryRetryableFailed
-			row.LastErrorClass = strptr(class)
-			row.NextAttemptAt = &next
-			row.UpdatedAt = now
-			return d.store.FinishChannelDelivery(ctx, row)
+
+	payload := SafePushPayload(intent.TemplateKey, intent.DomainRef, string(intent.Purpose))
+	agg := pushFanout{}
+	for i := range endpoints {
+		ep := endpoints[i]
+		sender := d.push.sender(ep.Provider)
+		if sender == nil {
+			agg.unconfigured++
+			continue
 		}
-		if res.ProviderRef != "" {
-			lastRef = res.ProviderRef
+		agg.configured++
+		mat, openErr := d.push.Endpoints.OpenDispatchMaterial(ep)
+		if openErr != nil {
+			agg.noteRetryable(ErrorClassRetryable)
+			continue
 		}
+		req := PushSendRequest{
+			EndpointID:     ep.ID,
+			Channel:        ep.Channel,
+			Platform:       ep.Platform,
+			Provider:       ep.Provider,
+			Material:       mat,
+			Payload:        payload,
+			IdempotencyKey: row.ID.String() + ":" + ep.ID.String(),
+		}
+		res, sendErr := sender.Send(ctx, req)
+		req.Material = PushProviderMaterial{}
+		if sendErr == nil {
+			agg.accepted++
+			if res.ProviderRef != "" {
+				agg.lastRef = res.ProviderRef
+			}
+			continue
+		}
+		if errors.Is(sendErr, errProviderEndpointInvalid) {
+			if _, revErr := d.push.Endpoints.Revoke(ctx, intent.RecipientUserID, ep.ID); revErr != nil {
+				agg.noteRetryable(ErrorClassRetryable)
+				continue
+			}
+			agg.invalid++
+			continue
+		}
+		class, retryable, _ := ClassifyProviderError(sendErr)
+		if retryable {
+			agg.noteRetryable(class)
+			continue
+		}
+		agg.notePermanent(class)
 	}
-	row.State = policy.DeliveryAccepted
-	if lastRef != "" {
-		ref := lastRef
-		row.ProviderRef = &ref
-	}
+
+	state, class, reason := agg.decide()
 	row.UpdatedAt = now
-	row.CompletedAt = &now
-	row.NextAttemptAt = nil
-	observability.FromContext(ctx).Info("notification_delivery_accepted",
-		"channel_code", string(row.Channel),
-		"intent_id", intent.ID.String(),
-		"delivery_outcome", string(policy.DeliveryAccepted),
-	)
-	return d.store.FinishChannelDelivery(ctx, row)
+	switch state {
+	case policy.DeliveryAccepted:
+		row.State = policy.DeliveryAccepted
+		row.CompletedAt = &now
+		row.NextAttemptAt = nil
+		if agg.lastRef != "" {
+			ref := agg.lastRef
+			row.ProviderRef = &ref
+		}
+		observability.FromContext(ctx).Info("notification_delivery_accepted",
+			"channel_code", string(row.Channel),
+			"intent_id", intent.ID.String(),
+			"delivery_outcome", string(policy.DeliveryAccepted),
+		)
+		return d.store.FinishChannelDelivery(ctx, row)
+	case policy.DeliveryPending:
+		return d.parkUnconfigured(ctx, row, now)
+	case policy.DeliverySuppressed:
+		row.State = policy.DeliverySuppressed
+		row.SuppressionReason = &reason
+		row.CompletedAt = &now
+		row.NextAttemptAt = nil
+		return d.store.FinishChannelDelivery(ctx, row)
+	case policy.DeliveryPermanentlyFailed:
+		row.State = policy.DeliveryPermanentlyFailed
+		row.LastErrorClass = strptr(class)
+		row.CompletedAt = &now
+		row.NextAttemptAt = nil
+		observability.FromContext(ctx).Info("notification_delivery_permanent_failure",
+			"channel_code", string(row.Channel),
+			"error_class", class,
+			"intent_id", intent.ID.String(),
+		)
+		return d.store.FinishChannelDelivery(ctx, row)
+	default:
+		return d.failRetryable(ctx, row, class, now)
+	}
 }
 
 func (d *Dispatcher) failRetryable(ctx context.Context, row ChannelDeliveryRow, class string, now time.Time) error {

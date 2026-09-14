@@ -42,7 +42,7 @@ func run() error {
 	}
 	observability.ConfigureJSON(cfg, nil)
 
-	if _, _, _, _, err := bindNotificationSenders(cfg); err != nil {
+	if _, _, _, _, _, _, _, err := bindNotificationSenders(cfg); err != nil {
 		return fmt.Errorf("notifications: %w", err)
 	}
 
@@ -154,7 +154,11 @@ func newRelay(ctx context.Context, cfg config.Config, pool *db.Pool) (*outbox.Re
 	if mediaSvc != nil {
 		go media.RunOrphanSweeper(ctx, mediaSvc, 0)
 	}
-	dispatcher, err := notifications.NewDispatcher(notifyStore, materializer, elig, wiring.ChannelEmail, wiring.ChannelSMS, nil, notifications.DispatcherConfig{
+	push, err := newPushDispatch(cfg, notifyStore, wiring)
+	if err != nil {
+		return nil, nil, err
+	}
+	dispatcher, err := notifications.NewDispatcher(notifyStore, materializer, elig, wiring.ChannelEmail, wiring.ChannelSMS, push, notifications.DispatcherConfig{
 		BatchSize:      cfg.OutboxBatchSize,
 		ProcessingHold: cfg.OutboxLease,
 		PollInterval:   cfg.OutboxPollInterval,

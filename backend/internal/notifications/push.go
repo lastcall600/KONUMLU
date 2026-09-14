@@ -26,9 +26,9 @@ const (
 	// HMAC-SHA256(v1|channel|platform|provider|canonical_endpoint_identity)
 	pushIdentityHashVersion = "v1"
 	maxWebEndpointLen       = 2048
-	maxWebKeyLen       = 256
-	minMobileTokenLen  = 16
-	maxMobileTokenLen  = 4096
+	maxWebKeyLen            = 256
+	minMobileTokenLen       = 16
+	maxMobileTokenLen       = 4096
 )
 
 type PushPlatform string

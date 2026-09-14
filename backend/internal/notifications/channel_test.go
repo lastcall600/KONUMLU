@@ -27,6 +27,10 @@ func TestClassifyProviderError(t *testing.T) {
 	if class != ErrorClassUnconfigured || !retry {
 		t.Fatalf("unconfigured class=%s retry=%v", class, retry)
 	}
+	class, retry, giveUp := ClassifyProviderError(ErrProviderEndpointInvalid)
+	if class != ErrorClassPermanent || retry || !giveUp {
+		t.Fatalf("endpoint invalid class=%s retry=%v giveUp=%v", class, retry, giveUp)
+	}
 }
 
 func TestRenderPlainEscapes(t *testing.T) {

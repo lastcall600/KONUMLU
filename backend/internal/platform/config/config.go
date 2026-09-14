@@ -87,6 +87,23 @@ const (
 	defaultNetgsmTimeout            = 5 * time.Second
 	envPushEndpointEncryptionKey    = "PUSH_ENDPOINT_ENCRYPTION_KEY"
 	envPushEndpointHashKey          = "PUSH_ENDPOINT_HASH_KEY"
+	envWebPushVAPIDPublicKey        = "WEBPUSH_VAPID_PUBLIC_KEY"
+	envWebPushVAPIDPrivateKey       = "WEBPUSH_VAPID_PRIVATE_KEY"
+	envWebPushVAPIDSubject          = "WEBPUSH_VAPID_SUBJECT"
+	envWebPushTimeout               = "WEBPUSH_TIMEOUT"
+	defaultWebPushTimeout           = 5 * time.Second
+	envFCMProjectID                 = "FCM_PROJECT_ID"
+	envFCMCredentialsFile           = "FCM_CREDENTIALS_FILE"
+	envFCMTimeout                   = "FCM_TIMEOUT"
+	defaultFCMTimeout               = 5 * time.Second
+	envAPNSTeamID                   = "APNS_TEAM_ID"
+	envAPNSKeyID                    = "APNS_KEY_ID"
+	envAPNSTopic                    = "APNS_TOPIC"
+	envAPNSPrivateKey               = "APNS_PRIVATE_KEY"
+	envAPNSPrivateKeyFile           = "APNS_PRIVATE_KEY_FILE"
+	envAPNSEnvironment              = "APNS_ENVIRONMENT"
+	envAPNSTimeout                  = "APNS_TIMEOUT"
+	defaultAPNSTimeout              = 5 * time.Second
 	envMediaMalwareScanRequired     = "MEDIA_MALWARE_SCAN_REQUIRED"
 	envMediaImageModerationRequired = "MEDIA_IMAGE_MODERATION_REQUIRED"
 	envStaffIDPIssuer               = "STAFF_IDP_ISSUER"
@@ -170,6 +187,12 @@ type Config struct {
 	// PushEndpoints holds AES-256-GCM + HMAC keys for durable push tokens.
 	// Keys are never logged. Registration HTTP is enabled only when keys load.
 	PushEndpoints PushEndpoints
+	// WebPush is VAPID Web Push. Private key is never logged.
+	WebPush WebPush
+	// FCM is Firebase Cloud Messaging HTTP v1. Credential JSON is never stored here.
+	FCM FCM
+	// APNs is Apple Push Notification service token authentication.
+	APNs APNs
 	// Media scanner/moderation requirements. Vendors are not selected; required+missing is retryable.
 	MediaMalwareScanRequired     bool
 	MediaImageModerationRequired bool
@@ -238,6 +261,66 @@ func (p PushEndpoints) String() string {
 }
 
 func (p PushEndpoints) GoString() string { return p.String() }
+
+// WebPush is VAPID configuration. The private key is never logged.
+type WebPush struct {
+	PublicKey  string
+	PrivateKey string
+	Subject    string
+	Timeout    time.Duration
+}
+
+func (w WebPush) String() string {
+	return fmt.Sprintf("config.WebPush{public_key_configured:%t private_key_configured:%t subject_configured:%t}",
+		w.PublicKey != "", w.PrivateKey != "", w.Subject != "")
+}
+
+func (w WebPush) GoString() string { return w.String() }
+
+func (w WebPush) Wired() bool {
+	return w.PublicKey != "" && w.PrivateKey != "" && w.Subject != "" && w.Timeout > 0
+}
+
+// FCM is FCM HTTP v1 project settings. Access tokens and JSON credentials
+// are never stored on this struct.
+type FCM struct {
+	ProjectID       string
+	CredentialsFile string
+	Timeout         time.Duration
+}
+
+func (f FCM) String() string {
+	return fmt.Sprintf("config.FCM{project_id_configured:%t credentials_file_configured:%t}",
+		f.ProjectID != "", f.CredentialsFile != "")
+}
+
+func (f FCM) GoString() string { return f.String() }
+
+func (f FCM) Wired() bool {
+	return f.ProjectID != "" && f.Timeout > 0
+}
+
+// APNs is token-based APNs settings. The signing key is never logged.
+type APNs struct {
+	TeamID      string
+	KeyID       string
+	Topic       string
+	PrivateKey  string
+	Environment string
+	Timeout     time.Duration
+}
+
+func (a APNs) String() string {
+	return fmt.Sprintf("config.APNs{team_id_configured:%t key_id_configured:%t topic_configured:%t private_key_configured:%t environment:%s}",
+		a.TeamID != "", a.KeyID != "", a.Topic != "", a.PrivateKey != "", a.Environment)
+}
+
+func (a APNs) GoString() string { return a.String() }
+
+func (a APNs) Wired() bool {
+	return a.TeamID != "" && a.KeyID != "" && a.Topic != "" && a.PrivateKey != "" &&
+		(a.Environment == "sandbox" || a.Environment == "production") && a.Timeout > 0
+}
 
 // StaffIDP holds issuer/audience/JWKS for a future staff identity adapter.
 type StaffIDP struct {
@@ -570,6 +653,21 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	cfg.PushEndpoints = push
+	webPush, err := parseWebPush()
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.WebPush = webPush
+	fcm, err := parseFCM()
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.FCM = fcm
+	apns, err := parseAPNs()
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.APNs = apns
 
 	malwareReq, err := parseOptionalBool(envMediaMalwareScanRequired)
 	if err != nil {

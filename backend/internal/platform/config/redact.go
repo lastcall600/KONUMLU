@@ -37,6 +37,10 @@ func (c Config) LogValue() slog.Value {
 		slog.Bool("push_endpoints_enabled", c.PushEndpoints.Enabled),
 		slog.Bool("push_endpoint_encryption_key_configured", len(c.PushEndpoints.EncryptionKey) == 32),
 		slog.Bool("push_endpoint_hash_key_configured", len(c.PushEndpoints.HashKey) == 32),
+		slog.Bool("webpush_configured", c.WebPush.Wired()),
+		slog.Bool("fcm_configured", c.FCM.Wired()),
+		slog.Bool("apns_configured", c.APNs.Wired()),
+		slog.String("apns_environment", c.APNs.Environment),
 	)
 }
 

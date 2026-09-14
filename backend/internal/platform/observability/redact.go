@@ -51,6 +51,8 @@ var sensitiveKeyExact = map[string]struct{}{
 	"netgsmpassword": {}, "netgsmusername": {},
 	"destination": {}, "verificationsecret": {},
 	"pushtoken": {}, "fcmtoken": {}, "apnstoken": {}, "deviceendpoint": {},
+	"vapidprivatekey": {}, "vapidpublickey": {}, "apnsprivatekey": {},
+	"fcmaccess": {}, "googlecredentials": {},
 	"p256dh": {}, "webpushauth": {}, "webpushendpoint": {}, "endpointurl": {},
 	"pushendpoint": {}, "endpointciphertext": {}, "endpointnonce": {},
 	"pushendpointencryptionkey": {}, "pushendpointhashkey": {},
