@@ -184,7 +184,7 @@ func TestChallengeRequiredCannotBypassByOmittingToken(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	assertErrorCode(t, rec, "forbidden")
+	assertErrorCode(t, rec, "challenge_required")
 	assertNoSensitiveLeak(t, rec.Body.String())
 	if h.identifiers.calls != 0 {
 		t.Fatal("missing challenge must not resolve identifiers")
@@ -212,6 +212,7 @@ func TestChallengeInvalidAndWrongActionAreForbidden(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("invalid = %d", rec.Code)
 	}
+	assertErrorCode(t, rec, "forbidden")
 	rec = do(t, h, http.MethodPost, "/v1/auth/password/login", allowedOrigin, map[string]any{
 		"kind": "email", "identifier": "owner@example.com", "password": "x",
 		"challengeToken": "ok:signup_complete",
@@ -219,6 +220,7 @@ func TestChallengeInvalidAndWrongActionAreForbidden(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("wrong action = %d", rec.Code)
 	}
+	assertErrorCode(t, rec, "forbidden")
 	if h.identifiers.calls != 0 {
 		t.Fatal("failed challenge must not resolve identifiers")
 	}
@@ -328,13 +330,39 @@ func TestChallengePolicyDoesNotDependOnAccountResolution(t *testing.T) {
 	if recUnknown.Code != http.StatusForbidden || recKnown.Code != http.StatusForbidden {
 		t.Fatalf("status unknown=%d known=%d", recUnknown.Code, recKnown.Code)
 	}
-	assertErrorCode(t, recUnknown, "forbidden")
-	assertErrorCode(t, recKnown, "forbidden")
+	assertErrorCode(t, recUnknown, "challenge_required")
+	assertErrorCode(t, recKnown, "challenge_required")
 	if recUnknown.Body.String() != recKnown.Body.String() {
 		t.Fatalf("challenge body diverged: %s vs %s", recUnknown.Body.String(), recKnown.Body.String())
 	}
 	if hUnknown.identifiers.calls != 0 || hKnown.identifiers.calls != 0 {
 		t.Fatal("challenge must run before identifier resolve")
+	}
+}
+
+func TestUnrelatedForbiddenIsNotChallengeRequired(t *testing.T) {
+	h := newTestHandler(t)
+	rec := do(t, h, http.MethodPost, "/v1/auth/password/login", "https://evil.example", map[string]any{
+		"kind": "email", "identifier": "owner@example.com", "password": "x",
+	}, nil)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("origin status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	assertErrorCode(t, rec, "forbidden")
+
+	h2 := newTestHandler(t)
+	h2.sessions.resolved = identity.Session{ID: mustID(t), UserID: mustID(t)}
+	h2.stepUp.requireErr = identity.ErrStepUpRequired
+	rec = do(t, h2, http.MethodPost, "/v1/auth/passkey/register/begin", allowedOrigin, nil, map[string]string{
+		sessionCookieName: "session-raw-token",
+		csrfCookieName:    "csrf-token",
+	}, withCSRF("csrf-token"))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("step-up status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	assertErrorCode(t, rec, "forbidden")
+	if strings.Contains(rec.Body.String(), "challenge_required") {
+		t.Fatal("step-up forbidden must not emit challenge_required")
 	}
 }
 

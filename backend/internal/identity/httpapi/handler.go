@@ -1326,6 +1326,9 @@ func writeRisk(w http.ResponseWriter, out identity.RiskOutcome) bool {
 	case identity.ReasonStorageUnavailable, identity.ReasonProviderUnavailable:
 		writeError(w, http.StatusServiceUnavailable, "unavailable")
 		return false
+	case identity.ReasonChallengeRequired:
+		writeError(w, http.StatusForbidden, "challenge_required")
+		return false
 	default:
 		writeError(w, http.StatusForbidden, "forbidden")
 		return false

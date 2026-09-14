@@ -13,6 +13,7 @@ import {
   type IdentifierKind,
 } from "@/lib/auth";
 import { DEFAULT_LOCALE } from "@/lib/locale";
+import { AuthTurnstile, useTurnstileChallenge } from "@/components/TurnstileWidget";
 
 type Step = 1 | 2 | 3;
 
@@ -42,6 +43,9 @@ export default function SignupPage() {
   const [signupProof, setSignupProof] = useState("");
   const [password, setPassword] = useState("");
   const [passwordConfirm, setPasswordConfirm] = useState("");
+  const startChallenge = useTurnstileChallenge("signup_start");
+  const finishChallenge = useTurnstileChallenge("signup_finish");
+  const completeChallenge = useTurnstileChallenge("signup_complete");
   const busy = status.kind === "loading";
 
   useEffect(() => {
@@ -77,13 +81,19 @@ export default function SignupPage() {
 
   async function onStart(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (startChallenge.blocksSubmit) {
+      setStatus({ kind: "error", message: "Güvenlik doğrulaması gerekli." });
+      return;
+    }
     setStatus({ kind: "loading", message: "Doğrulama başlatılıyor…" });
+    const challengeToken = startChallenge.consumeToken();
     try {
       const trimmed = identifier.trim();
       const result = await startSignupVerification({
         kind,
         identifier: trimmed,
         locale: DEFAULT_LOCALE,
+        challengeToken,
       });
       setIdentifier(trimmed);
       setChallengeId(result.challengeId);
@@ -96,23 +106,31 @@ export default function SignupPage() {
           "Doğrulama adımına geçildi. Bir kod aldıysanız girin. Kod gelmezse daha sonra tekrar deneyin.",
       });
     } catch (error) {
+      startChallenge.applyAuthError(error);
       setStatus({ kind: "error", message: messageFromError(error) });
     }
   }
 
   async function onFinish(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (finishChallenge.blocksSubmit) {
+      setStatus({ kind: "error", message: "Güvenlik doğrulaması gerekli." });
+      return;
+    }
     setStatus({ kind: "loading", message: "Kod doğrulanıyor…" });
+    const challengeToken = finishChallenge.consumeToken();
     try {
       const result = await finishSignupVerification({
         challengeId,
         code: code.trim(),
+        challengeToken,
       });
       setSignupProof(result.signupProof);
       setCode("");
       setStep(3);
       setStatus({ kind: "success", message: "Doğrulama tamamlandı. Hesabı oluşturabilirsiniz." });
     } catch (error) {
+      finishChallenge.applyAuthError(error);
       setStatus({ kind: "error", message: messageFromError(error) });
     }
   }
@@ -123,11 +141,17 @@ export default function SignupPage() {
       setStatus({ kind: "error", message: "Şifreler eşleşmiyor. Lütfen tekrar deneyin." });
       return;
     }
+    if (completeChallenge.blocksSubmit) {
+      setStatus({ kind: "error", message: "Güvenlik doğrulaması gerekli." });
+      return;
+    }
     setStatus({ kind: "loading", message: "Hesap oluşturuluyor…" });
+    const challengeToken = completeChallenge.consumeToken();
     try {
       await completeSignup({
         signupProof,
         password: password === "" ? undefined : password,
+        challengeToken,
       });
       setSignupProof("");
       setPassword("");
@@ -135,6 +159,7 @@ export default function SignupPage() {
       setStatus({ kind: "success", message: "Hesap oluşturuldu." });
       router.replace("/");
     } catch (error) {
+      completeChallenge.applyAuthError(error);
       setStatus({ kind: "error", message: messageFromError(error) });
     }
   }
@@ -235,7 +260,8 @@ export default function SignupPage() {
                   disabled={busy}
                 />
 
-                <button type="submit" disabled={busy}>
+                <AuthTurnstile challenge={startChallenge} />
+                <button type="submit" disabled={busy || startChallenge.blocksSubmit}>
                   Devam
                 </button>
               </form>
@@ -264,11 +290,12 @@ export default function SignupPage() {
                   required
                   disabled={busy}
                 />
+                <AuthTurnstile challenge={finishChallenge} />
                 <div className="auth-actions">
                   <button type="button" onClick={backToIdentifier} disabled={busy}>
                     Geri
                   </button>
-                  <button type="submit" disabled={busy}>
+                  <button type="submit" disabled={busy || finishChallenge.blocksSubmit}>
                     Doğrula
                   </button>
                 </div>
@@ -312,11 +339,12 @@ export default function SignupPage() {
                     />
                   </>
                 ) : null}
+                <AuthTurnstile challenge={completeChallenge} />
                 <div className="auth-actions">
                   <button type="button" onClick={backToVerification} disabled={busy}>
                     Geri
                   </button>
-                  <button type="submit" disabled={busy}>
+                  <button type="submit" disabled={busy || completeChallenge.blocksSubmit}>
                     Hesabı oluştur
                   </button>
                 </div>

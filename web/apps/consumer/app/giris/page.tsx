@@ -13,6 +13,7 @@ import {
   type IdentifierKind,
 } from "@/lib/auth";
 import { webAuthnLoginSupported } from "@/lib/webauthn";
+import { AuthTurnstile, useTurnstileChallenge } from "@/components/TurnstileWidget";
 
 type Status =
   | { kind: "idle" }
@@ -35,6 +36,9 @@ export default function LoginPage() {
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [passkeySupported, setPasskeySupported] = useState(true);
+  const passwordChallenge = useTurnstileChallenge("password_login");
+  const passkeyBeginChallenge = useTurnstileChallenge("passkey_login_begin");
+  const passkeyFinishChallenge = useTurnstileChallenge("passkey_login_finish");
   const busy = status.kind === "loading";
 
   useEffect(() => {
@@ -73,30 +77,45 @@ export default function LoginPage() {
   }, []);
 
   async function onPasskey() {
+    if (passkeyBeginChallenge.blocksSubmit || passkeyFinishChallenge.blocksSubmit) {
+      setStatus({ kind: "error", message: "Güvenlik doğrulaması gerekli." });
+      return;
+    }
     setStatus({ kind: "loading", message: "Geçiş anahtarı bekleniyor…" });
+    const beginChallengeToken = passkeyBeginChallenge.consumeToken();
+    const finishChallengeToken = passkeyFinishChallenge.consumeToken();
     try {
-      const next = await loginWithPasskey();
+      const next = await loginWithPasskey({ beginChallengeToken, finishChallengeToken });
       setSession(next);
       setPassword("");
       setStatus({ kind: "success", message: "Giriş başarılı." });
     } catch (error) {
+      passkeyBeginChallenge.applyAuthError(error);
+      passkeyFinishChallenge.applyAuthError(error);
       setStatus({ kind: "error", message: messageFromError(error) });
     }
   }
 
   async function onPassword(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (passwordChallenge.blocksSubmit) {
+      setStatus({ kind: "error", message: "Güvenlik doğrulaması gerekli." });
+      return;
+    }
     setStatus({ kind: "loading", message: "Giriş yapılıyor…" });
+    const challengeToken = passwordChallenge.consumeToken();
     try {
       const next = await loginWithPassword({
         kind,
         identifier: identifier.trim(),
         password,
+        challengeToken,
       });
       setSession(next);
       setPassword("");
       setStatus({ kind: "success", message: "Giriş başarılı." });
     } catch (error) {
+      passwordChallenge.applyAuthError(error);
       setStatus({ kind: "error", message: messageFromError(error) });
     }
   }
@@ -137,9 +156,18 @@ export default function LoginPage() {
             <h3 id="passkey-heading">Geçiş anahtarı</h3>
             <p>Tercih edilen giriş yöntemi.</p>
             {passkeySupported ? (
-              <button type="button" className="auth-primary-action" onClick={() => void onPasskey()} disabled={busy}>
-                Geçiş anahtarı ile giriş
-              </button>
+              <>
+                <button
+                  type="button"
+                  className="auth-primary-action"
+                  onClick={() => void onPasskey()}
+                  disabled={busy || passkeyBeginChallenge.blocksSubmit || passkeyFinishChallenge.blocksSubmit}
+                >
+                  Geçiş anahtarı ile giriş
+                </button>
+                <AuthTurnstile challenge={passkeyBeginChallenge} />
+                <AuthTurnstile challenge={passkeyFinishChallenge} />
+              </>
             ) : (
               <p className="auth-error">Bu tarayıcı geçiş anahtarlarını desteklemiyor.</p>
             )}
@@ -203,7 +231,8 @@ export default function LoginPage() {
                 disabled={busy}
               />
 
-              <button type="submit" disabled={busy}>
+              <AuthTurnstile challenge={passwordChallenge} />
+              <button type="submit" disabled={busy || passwordChallenge.blocksSubmit}>
                 Şifre ile giriş
               </button>
             </form>

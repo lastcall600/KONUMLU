@@ -1,5 +1,12 @@
 import { apiFetch } from "@/lib/api";
+import { getTurnstilePublicConfig } from "@/lib/config";
 import { CSRF_HEADER_NAME, readCsrfToken } from "@/lib/csrf";
+import {
+  classifyChallengeHttp,
+  isTurnstileOperationEnabled,
+  messageForChallengeCode,
+} from "@/lib/humanChallenge";
+import type { TurnstileAction } from "@/lib/turnstileActions";
 import { assertionToJSON, publicKeyOptionsFromJson, webAuthnLoginSupported } from "@/lib/webauthn";
 
 export type IdentifierKind = "email" | "phone";
@@ -13,17 +20,22 @@ export type AuthClientErrorCode =
   | "unauthenticated"
   | "rate_limited"
   | "unavailable"
+  | "challenge_required"
+  | "challenge_failed"
+  | "challenge_unavailable"
   | "passkey_unsupported"
   | "passkey_cancelled"
   | "generic";
 
 export class AuthClientError extends Error {
   readonly code: AuthClientErrorCode;
+  readonly operation?: TurnstileAction;
 
-  constructor(code: AuthClientErrorCode, message: string) {
+  constructor(code: AuthClientErrorCode, message: string, operation?: TurnstileAction) {
     super(message);
     this.name = "AuthClientError";
     this.code = code;
+    this.operation = operation;
   }
 }
 
@@ -88,10 +100,23 @@ function authErrorFromResponse(
   body: unknown,
   fallback: string,
   unauthenticatedMessage: string,
+  challenge?: { operation: TurnstileAction; sentToken: boolean },
 ): AuthClientError {
   const code = errorCodeFromBody(body);
   if (status === 429 || code === "rate_limited") {
     return new AuthClientError("rate_limited", RATE_LIMITED);
+  }
+  if (challenge) {
+    const classified = classifyChallengeHttp({
+      status,
+      errorCode: code,
+      sentToken: challenge.sentToken,
+      sitekeyPresent: Boolean(getTurnstilePublicConfig().turnstileSiteKey),
+      operationEnabled: isTurnstileOperationEnabled(challenge.operation),
+    });
+    if (classified) {
+      return new AuthClientError(classified, messageForChallengeCode(classified), challenge.operation);
+    }
   }
   if (status === 503 || code === "unavailable") {
     return new AuthClientError("unavailable", UNAVAILABLE);
@@ -102,8 +127,20 @@ function authErrorFromResponse(
   return new AuthClientError("generic", fallback);
 }
 
-function loginErrorFromResponse(status: number, body: unknown): AuthClientError {
-  return authErrorFromResponse(status, body, LOGIN_FAILED, LOGIN_FAILED);
+function loginErrorFromResponse(
+  status: number,
+  body: unknown,
+  challenge?: { operation: TurnstileAction; sentToken: boolean },
+): AuthClientError {
+  return authErrorFromResponse(status, body, LOGIN_FAILED, LOGIN_FAILED, challenge);
+}
+
+function optionalChallengeToken(token: string | undefined): { challengeToken?: string } {
+  const trimmed = token?.trim() ?? "";
+  if (!trimmed) {
+    return {};
+  }
+  return { challengeToken: trimmed };
 }
 
 function parseSession(body: unknown): AuthSession | null {
@@ -136,19 +173,26 @@ export async function loginWithPassword(input: {
   kind: IdentifierKind;
   identifier: string;
   password: string;
+  challengeToken?: string;
 }): Promise<AuthSession> {
+  const payload = {
+    kind: input.kind,
+    identifier: input.identifier,
+    password: input.password,
+    ...optionalChallengeToken(input.challengeToken),
+  };
+  const sentToken = Boolean(payload.challengeToken);
   const response = await apiFetch("/v1/auth/password/login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      kind: input.kind,
-      identifier: input.identifier,
-      password: input.password,
-    }),
+    body: JSON.stringify(payload),
   });
   const body = await readJson(response);
   if (!response.ok) {
-    throw loginErrorFromResponse(response.status, body);
+    throw loginErrorFromResponse(response.status, body, {
+      operation: "password_login",
+      sentToken,
+    });
   }
   const session = parseSession(body);
   if (!session) {
@@ -157,15 +201,32 @@ export async function loginWithPassword(input: {
   return session;
 }
 
-export async function loginWithPasskey(): Promise<AuthSession> {
+export async function loginWithPasskey(input?: {
+  beginChallengeToken?: string;
+  finishChallengeToken?: string;
+}): Promise<AuthSession> {
   if (!webAuthnLoginSupported()) {
     throw new AuthClientError("passkey_unsupported", PASSKEY_UNSUPPORTED);
   }
 
-  const begin = await apiFetch("/v1/auth/passkey/login/begin", { method: "POST" });
+  const beginPayload = optionalChallengeToken(input?.beginChallengeToken);
+  const beginSent = Boolean(beginPayload.challengeToken);
+  const begin = await apiFetch(
+    "/v1/auth/passkey/login/begin",
+    beginSent
+      ? {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(beginPayload),
+        }
+      : { method: "POST" },
+  );
   const beginBody = await readJson(begin);
   if (!begin.ok) {
-    throw loginErrorFromResponse(begin.status, beginBody);
+    throw loginErrorFromResponse(begin.status, beginBody, {
+      operation: "passkey_login_begin",
+      sentToken: beginSent,
+    });
   }
 
   const payload = beginBody as PasskeyBeginBody | null;
@@ -192,17 +253,23 @@ export async function loginWithPasskey(): Promise<AuthSession> {
     throw new AuthClientError("generic", LOGIN_FAILED);
   }
 
+  const finishPayload = {
+    ceremonyToken,
+    credential: assertionToJSON(credential),
+    ...optionalChallengeToken(input?.finishChallengeToken),
+  };
+  const finishSent = Boolean(finishPayload.challengeToken);
   const finish = await apiFetch("/v1/auth/passkey/login/finish", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      ceremonyToken,
-      credential: assertionToJSON(credential),
-    }),
+    body: JSON.stringify(finishPayload),
   });
   const finishBody = await readJson(finish);
   if (!finish.ok) {
-    throw loginErrorFromResponse(finish.status, finishBody);
+    throw loginErrorFromResponse(finish.status, finishBody, {
+      operation: "passkey_login_finish",
+      sentToken: finishSent,
+    });
   }
   const session = parseSession(finishBody);
   if (!session) {
@@ -215,19 +282,26 @@ export async function startSignupVerification(input: {
   kind: IdentifierKind;
   identifier: string;
   locale: string;
+  challengeToken?: string;
 }): Promise<{ challengeId: string }> {
+  const payload = {
+    kind: input.kind,
+    identifier: input.identifier,
+    locale: input.locale,
+    ...optionalChallengeToken(input.challengeToken),
+  };
+  const sentToken = Boolean(payload.challengeToken);
   const response = await apiFetch("/v1/auth/signup/verification/start", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      kind: input.kind,
-      identifier: input.identifier,
-      locale: input.locale,
-    }),
+    body: JSON.stringify(payload),
   });
   const body = await readJson(response);
   if (!response.ok) {
-    throw authErrorFromResponse(response.status, body, SIGNUP_START_FAILED, SIGNUP_START_FAILED);
+    throw authErrorFromResponse(response.status, body, SIGNUP_START_FAILED, SIGNUP_START_FAILED, {
+      operation: "signup_start",
+      sentToken,
+    });
   }
   if (typeof body !== "object" || body === null) {
     throw new AuthClientError("generic", SIGNUP_START_FAILED);
@@ -242,39 +316,49 @@ export async function startSignupVerification(input: {
 export async function finishSignupVerification(input: {
   challengeId: string;
   code: string;
+  challengeToken?: string;
 }): Promise<{ signupProof: string }> {
+  const payload = {
+    challengeId: input.challengeId,
+    code: input.code,
+    ...optionalChallengeToken(input.challengeToken),
+  };
+  const sentToken = Boolean(payload.challengeToken);
   const response = await apiFetch("/v1/auth/signup/verification/finish", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      challengeId: input.challengeId,
-      code: input.code,
-    }),
+    body: JSON.stringify(payload),
   });
   const body = await readJson(response);
   if (!response.ok) {
-    throw authErrorFromResponse(response.status, body, SIGNUP_VERIFY_FAILED, SIGNUP_VERIFY_FAILED);
+    throw authErrorFromResponse(response.status, body, SIGNUP_VERIFY_FAILED, SIGNUP_VERIFY_FAILED, {
+      operation: "signup_finish",
+      sentToken,
+    });
   }
   if (typeof body !== "object" || body === null) {
     throw new AuthClientError("generic", SIGNUP_VERIFY_FAILED);
   }
-  const payload = body as { verified?: unknown; signupProof?: unknown };
-  if (payload.verified !== true || typeof payload.signupProof !== "string" || payload.signupProof === "") {
+  const parsed = body as { verified?: unknown; signupProof?: unknown };
+  if (parsed.verified !== true || typeof parsed.signupProof !== "string" || parsed.signupProof === "") {
     throw new AuthClientError("generic", SIGNUP_VERIFY_FAILED);
   }
-  return { signupProof: payload.signupProof };
+  return { signupProof: parsed.signupProof };
 }
 
 export async function completeSignup(input: {
   signupProof: string;
   password?: string;
+  challengeToken?: string;
 }): Promise<AuthSession> {
-  const payload: { signupProof: string; password?: string } = {
+  const payload: { signupProof: string; password?: string; challengeToken?: string } = {
     signupProof: input.signupProof,
+    ...optionalChallengeToken(input.challengeToken),
   };
   if (input.password) {
     payload.password = input.password;
   }
+  const sentToken = Boolean(payload.challengeToken);
   const response = await apiFetch("/v1/auth/signup/complete", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -282,7 +366,13 @@ export async function completeSignup(input: {
   });
   const body = await readJson(response);
   if (!response.ok) {
-    throw authErrorFromResponse(response.status, body, SIGNUP_COMPLETE_FAILED, SIGNUP_COMPLETE_FAILED);
+    throw authErrorFromResponse(
+      response.status,
+      body,
+      SIGNUP_COMPLETE_FAILED,
+      SIGNUP_COMPLETE_FAILED,
+      { operation: "signup_complete", sentToken },
+    );
   }
   const session = parseSession(body);
   if (!session) {
@@ -295,19 +385,26 @@ export async function startPasswordReset(input: {
   kind: IdentifierKind;
   identifier: string;
   locale: string;
+  challengeToken?: string;
 }): Promise<{ challengeId: string }> {
+  const payload = {
+    kind: input.kind,
+    identifier: input.identifier,
+    locale: input.locale,
+    ...optionalChallengeToken(input.challengeToken),
+  };
+  const sentToken = Boolean(payload.challengeToken);
   const response = await apiFetch("/v1/auth/password/reset/start", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      kind: input.kind,
-      identifier: input.identifier,
-      locale: input.locale,
-    }),
+    body: JSON.stringify(payload),
   });
   const body = await readJson(response);
   if (!response.ok) {
-    throw authErrorFromResponse(response.status, body, RESET_START_FAILED, RESET_START_FAILED);
+    throw authErrorFromResponse(response.status, body, RESET_START_FAILED, RESET_START_FAILED, {
+      operation: "reset_start",
+      sentToken,
+    });
   }
   if (typeof body !== "object" || body === null) {
     throw new AuthClientError("generic", RESET_START_FAILED);
@@ -322,18 +419,25 @@ export async function startPasswordReset(input: {
 export async function verifyPasswordReset(input: {
   challengeId: string;
   code: string;
+  challengeToken?: string;
 }): Promise<{ resetProof: string }> {
+  const payload = {
+    challengeId: input.challengeId,
+    code: input.code,
+    ...optionalChallengeToken(input.challengeToken),
+  };
+  const sentToken = Boolean(payload.challengeToken);
   const response = await apiFetch("/v1/auth/password/reset/verify", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      challengeId: input.challengeId,
-      code: input.code,
-    }),
+    body: JSON.stringify(payload),
   });
   const body = await readJson(response);
   if (!response.ok) {
-    throw authErrorFromResponse(response.status, body, RESET_VERIFY_FAILED, RESET_VERIFY_FAILED);
+    throw authErrorFromResponse(response.status, body, RESET_VERIFY_FAILED, RESET_VERIFY_FAILED, {
+      operation: "reset_verify",
+      sentToken,
+    });
   }
   if (typeof body !== "object" || body === null) {
     throw new AuthClientError("generic", RESET_VERIFY_FAILED);
@@ -348,18 +452,28 @@ export async function verifyPasswordReset(input: {
 export async function completePasswordReset(input: {
   resetProof: string;
   newPassword: string;
+  challengeToken?: string;
 }): Promise<void> {
+  const payload = {
+    resetProof: input.resetProof,
+    newPassword: input.newPassword,
+    ...optionalChallengeToken(input.challengeToken),
+  };
+  const sentToken = Boolean(payload.challengeToken);
   const response = await apiFetch("/v1/auth/password/reset/complete", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      resetProof: input.resetProof,
-      newPassword: input.newPassword,
-    }),
+    body: JSON.stringify(payload),
   });
   const body = await readJson(response);
   if (!response.ok) {
-    throw authErrorFromResponse(response.status, body, RESET_COMPLETE_FAILED, RESET_COMPLETE_FAILED);
+    throw authErrorFromResponse(
+      response.status,
+      body,
+      RESET_COMPLETE_FAILED,
+      RESET_COMPLETE_FAILED,
+      { operation: "reset_complete", sentToken },
+    );
   }
   const ok =
     typeof body === "object" &&
