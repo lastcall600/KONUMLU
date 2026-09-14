@@ -41,6 +41,9 @@ func (c Config) LogValue() slog.Value {
 		slog.Bool("fcm_configured", c.FCM.Wired()),
 		slog.Bool("apns_configured", c.APNs.Wired()),
 		slog.String("apns_environment", c.APNs.Environment),
+		slog.Bool("tr_compliance_ingress_enabled", c.TRCompliance.IngressEnabled),
+		slog.Int("tr_compliance_trusted_keys", len(c.TRCompliance.TrustedKeyIDs)),
+		slog.Bool("tr_compliance_token_configured", c.TRCompliance.IngressToken != ""),
 	)
 }
 

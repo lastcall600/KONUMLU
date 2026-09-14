@@ -383,7 +383,7 @@ These do **not** reopen D-010, Property≠Vehicle, no admin bypass, mock-vs-real
 4. **E-E004** Local mock implements the same interface; not wired in production.
 5. **E-E005** AI and Case Engine cannot verify EİDS.
 6. **E-E006** Do not embed official URLs or fee tables in domain code or this decision as facts.
-7. **E-E007** Auth success must not set EİDS status (ADR-004).
+8. **E-E008** Germany consumes only the ADR-015 signed decision. V1 encoding is Ed25519 over repository-owned `SigningBytes` in `internal/eids/trdecision`. Official provider adapters remain out of this ADR. See [eids-tr-decision-protocol.md](../architecture/eids-tr-decision-protocol.md).
 
 ---
 

@@ -18,6 +18,8 @@ import (
 	"backend/internal/disputes"
 	disputeshttp "backend/internal/disputes/httpapi"
 	"backend/internal/eids"
+	eidshttp "backend/internal/eids/httpapi"
+	"backend/internal/eids/trdecision"
 	"backend/internal/favorites"
 	favoriteshttp "backend/internal/favorites/httpapi"
 	"backend/internal/identity"
@@ -149,7 +151,7 @@ func run() error {
 		return fmt.Errorf("media http: %w", err)
 	}
 
-	listingsHandler, err := newListingsHTTP(pool, cfg, sessions, objects)
+	listingsHandler, trIngress, err := newListingsHTTP(pool, cfg, sessions, objects)
 	if err != nil {
 		return fmt.Errorf("listings http: %w", err)
 	}
@@ -244,7 +246,8 @@ func run() error {
 			identity:   identityStaff,
 			listings:   listingsStaff,
 			trust:      trustStaff,
-			reviews:    reviewStaff,
+			reviews:      reviewStaff,
+			trCompliance: trIngress,
 		})),
 	}
 
@@ -362,6 +365,9 @@ func newMux(ready health.CheckFunc, identityHandler *httpapi.Handler, publicProf
 	if staff.reviews != nil {
 		staff.reviews.Register(mux)
 	}
+	if staff.trCompliance != nil {
+		staff.trCompliance.Register(mux)
+	}
 	return mux
 }
 
@@ -372,6 +378,7 @@ type staffRoutes struct {
 	listings   *listingshttp.StaffHandler
 	trust      *trusthttp.StaffHandler
 	reviews    *reviewaggregateshttp.StaffHandler
+	trCompliance *eidshttp.Handler
 }
 
 func newStaffAuthorizer(cfg config.Config) (staffauthcontracts.Authorizer, error) {
@@ -1104,19 +1111,38 @@ func (s identitySavedSearchSessions) Resolve(ctx context.Context, rawToken strin
 	return id, nil
 }
 
-func newListingsHTTP(pool *db.Pool, cfg config.Config, sessions *identity.Sessions, objects media.ObjectStorage) (*listingshttp.Handler, error) {
+func newListingsHTTP(pool *db.Pool, cfg config.Config, sessions *identity.Sessions, objects media.ObjectStorage) (*listingshttp.Handler, *eidshttp.Handler, error) {
 	mdSvc, err := masterdata.NewService(masterdata.NewPostgresStore(pool), nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	listingSvc, err := listings.NewService(listings.NewPostgresStore(pool), masterdata.NewPublishedForms(mdSvc), nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	eidsPolicy := masterdata.NewEIDSPolicy(mdSvc)
 	eidsSvc, err := eids.NewService(eids.NewPostgresStore(pool), listingSvc, eidsPolicy, eidsadapter.Unconfigured{}, nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	var trIngress *eidshttp.Handler
+	if cfg.TRCompliance.IngressEnabled {
+		ring, err := trdecision.ParseTrustedRing(cfg.TRCompliance.TrustedPublicKeysRaw())
+		if err != nil {
+			return nil, nil, err
+		}
+		verifier, err := trdecision.NewVerifier(ring, cfg.TRCompliance.Audience, trdecision.TimePolicy{
+			MaxClockSkew:  cfg.TRCompliance.MaxClockSkew,
+			MaxIngressAge: cfg.TRCompliance.MaxIngressAge,
+		}, nil)
+		if err != nil {
+			return nil, nil, err
+		}
+		eidsSvc.SetSignedDecisionVerifier(verifier)
+		trIngress, err = eidshttp.New(eidsSvc, cfg.TRCompliance.IngressToken, nil)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 	ob, err := outbox.New(outbox.NewPostgresStore(pool), outbox.Policy{
 		BatchSize:         cfg.OutboxBatchSize,
@@ -1127,12 +1153,12 @@ func newListingsHTTP(pool *db.Pool, cfg config.Config, sessions *identity.Sessio
 		Jitter:            cfg.OutboxRetryJitter,
 	}, nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	listingSvc.SetOutbox(listings.PoolTransactor{Pool: pool}, ob)
 	locSvc, err := location.NewService(location.NewPostgresStore(pool), nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	locSvc.SetOutbox(ob)
 	var listingMedia mediacontracts.ListingMedia
@@ -1140,29 +1166,29 @@ func newListingsHTTP(pool *db.Pool, cfg config.Config, sessions *identity.Sessio
 	if objects != nil {
 		mediaSvc, err := media.NewService(media.NewPostgresStore(pool), objects, nil)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		listingMedia = media.NewListingMedia(mediaSvc)
 		publicMedia = media.NewPublicListingMedia(mediaSvc)
 	}
 	orch, err := listings.NewDraftOrchestrator(listingSvc, location.NewGeo(locSvc), listingMedia, listings.PoolTransactor{Pool: pool})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	profileSvc, err := publicprofile.NewService(publicprofile.NewPostgresStore(pool), nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	profiles, err := publicprofile.NewResolver(profileSvc)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	h, err := listingshttp.New(identityListingsSessions{sessions: sessions}, orch, listingSvc, cfg.WebAuthnRPOrigins, location.NewListingLocations(locSvc), publicMedia, profiles)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	h.SetEIDS(eidsPolicy, eids.NewPublishGate(eidsSvc), eids.NewOwnerAPI(eidsSvc))
-	return h, nil
+	return h, trIngress, nil
 }
 
 type identityListingsSessions struct {

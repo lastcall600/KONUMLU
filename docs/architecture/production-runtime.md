@@ -16,7 +16,7 @@ Do not split marketplace domains into separate deployable services. The Go backe
 | Consumer web (`web/apps/consumer`) | Public Next.js app |
 | Admin web (`web/apps/admin`) | Management Center Next.js app |
 | External providers | Staff IdP, email/SMS, malware/moderation, PSP — only when configured |
-| Türkiye Compliance Gateway | Separate Türkiye-hosted process + PostgreSQL for official EİDS/e-Devlet I/O, sensitive evidence, and **signed verification decisions**. Not a general app server. Source of truth: [ADR-015](../ADR/ADR-015-tr-compliance-gateway-data-residency.md) (🔒 FROZEN). |
+| Türkiye Compliance Gateway | Separate Türkiye-hosted process (`cmd/trgateway`) + PostgreSQL for official EİDS/e-Devlet I/O, sensitive evidence, and **signed verification decisions**. Not a general app server. Protocol: [eids-tr-decision-protocol.md](./eids-tr-decision-protocol.md). Source of truth: [ADR-015](../ADR/ADR-015-tr-compliance-gateway-data-residency.md) (🔒 FROZEN). |
 
 `cmd/migrate` is an explicit operator CLI. Applications do not auto-run migrations on startup.
 
@@ -80,7 +80,7 @@ PostgreSQL transactional outbox + `cmd/worker` poller. A second bounded poll loo
 
 ## Deployment images
 
-`backend/Dockerfile` builds `COMMAND=server` or `COMMAND=worker`. Consumer and admin web are separate Next.js builds. Do not add Kubernetes manifests here. Do not select AWS/GCP/Azure/Fly. OpenTofu/Terraform remains deferred with hosting.
+`backend/Dockerfile` builds `COMMAND=server`, `COMMAND=worker`, or `COMMAND=trgateway`. Consumer and admin web are separate Next.js builds. Do not add Kubernetes manifests here. Do not select AWS/GCP/Azure/Fly. OpenTofu/Terraform remains deferred with hosting.
 
 ## Backup / restore (encode, do not implement cloud backups)
 

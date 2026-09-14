@@ -12,6 +12,8 @@ import (
 func TestEIDSProductionDoesNotImportPeerImplementations(t *testing.T) {
 	assertNoPeerImpl(t, ".")
 	assertNoPeerImpl(t, filepath.Join("contracts"))
+	assertNoPeerImpl(t, filepath.Join("trdecision"))
+	assertNoPeerImpl(t, filepath.Join("httpapi"))
 }
 
 func assertNoPeerImpl(t *testing.T, dir string) {

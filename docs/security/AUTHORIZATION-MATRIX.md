@@ -122,6 +122,7 @@ Bearer with provider down → **503** (`unavailable`). Invalid bearer → **401*
 |---|---|---|---|
 | POST `/v1/listings/{id}/eids-verifications` | 401 | ALLOW + CSRF (idempotent); unconfigured = unavailable not verified | **404** |
 | GET `/v1/listings/{id}/eids-verification` | 401 | ALLOW | **404** |
+| POST `/internal/tr-compliance/v1/verification-decisions` | **401** without TR ingress Bearer; cookies/staff Bearer **401** | N/A (not consumer) | N/A |
 
 No staff EİDS HTTP. No client eligibility spoof (rejected).
 
