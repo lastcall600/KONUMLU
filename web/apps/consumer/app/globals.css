@@ -1,13 +1,9 @@
+@import "../styles/tokens.css";
+
 :root {
   color-scheme: light;
-  font-family:
-    system-ui,
-    "Segoe UI",
-    "Noto Sans",
-    "Noto Sans Arabic",
-    "Noto Naskh Arabic",
-    sans-serif;
-  line-height: 1.5;
+  font-family: var(--font-family-sans);
+  line-height: var(--font-line-height-body);
 }
 
 *,
@@ -23,8 +19,13 @@ body {
 }
 
 body {
-  color: #111;
-  background: #fafafa;
+  color: var(--color-text-default);
+  background: var(--color-surface-default);
+}
+
+:focus-visible {
+  outline: var(--focus-ring-width) solid var(--color-border-focus);
+  outline-offset: var(--focus-ring-offset);
 }
 
 main {

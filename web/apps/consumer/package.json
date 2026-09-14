@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test": "node --import ./scripts/register-ts-tests.mjs --test lib/webPush.test.ts lib/turnstile.test.ts"
+    "test": "node --import ./scripts/register-ts-tests.mjs --test lib/webPush.test.ts lib/turnstile.test.ts lib/theme/tokens.test.ts"
   },
   "engines": {
     "node": ">=20"
