@@ -359,14 +359,16 @@ func TestLiveHTTPPreferencesConsentInbox(t *testing.T) {
 }
 
 type staticDest struct {
-	email, phone, fail bool
+	email, phone, fail, disabled, deleted bool
 }
 
 func (s staticDest) ReadNotificationEligibility(_ context.Context, _ identitycontracts.ID) (identitycontracts.NotificationEligibility, error) {
 	if s.fail {
 		return identitycontracts.NotificationEligibility{}, identitycontracts.ErrUnavailable
 	}
-	return identitycontracts.NotificationEligibility{EmailVerified: s.email, PhoneVerified: s.phone}, nil
+	return identitycontracts.NotificationEligibility{
+		EmailVerified: s.email, PhoneVerified: s.phone, Disabled: s.disabled, Deleted: s.deleted,
+	}, nil
 }
 
 func outboxIDFrom(t *testing.T, seed ID) outbox.ID {

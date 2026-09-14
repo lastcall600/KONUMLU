@@ -8,7 +8,13 @@ import (
 	bizcontracts "backend/internal/businesses/contracts"
 	needcontracts "backend/internal/needs/contracts"
 	"backend/internal/platform/db"
+	"backend/internal/platform/outbox"
+	offercontracts "backend/internal/offers/contracts"
 )
+
+type notifyEnqueuer interface {
+	Enqueue(ctx context.Context, exec outbox.Execer, in outbox.NewEvent) (outbox.Event, error)
+}
 
 // V1 need lifecycle: accepting an offer does not mark the Need fulfilled.
 // The Need stays open until a later transaction/fulfillment step.
@@ -21,6 +27,8 @@ type Service struct {
 	businesses  bizcontracts.Lookup
 	catalog     bizcontracts.Catalog
 	now         func() time.Time
+	tx          Transactor
+	outbox      notifyEnqueuer
 }
 
 func NewService(
@@ -45,6 +53,14 @@ func NewService(
 		catalog:     catalog,
 		now:         now,
 	}, nil
+}
+
+func (s *Service) SetOutbox(tx Transactor, enqueuer notifyEnqueuer) {
+	if s == nil {
+		return
+	}
+	s.tx = tx
+	s.outbox = enqueuer
 }
 
 func (s *Service) Create(ctx context.Context, providerUserID ID, content Content) (Offer, error) {
@@ -82,15 +98,22 @@ func (s *Service) Create(ctx context.Context, providerUserID ID, content Content
 	if err != nil {
 		return Offer{}, err
 	}
-	if err := s.store.Create(ctx, offer); err != nil {
-		if errors.Is(mapStoreErr(err), errConflict) {
+	requester := ID(need.RequesterUserID)
+	commit := func(ctx context.Context) error {
+		if err := s.store.Create(ctx, offer); err != nil {
+			return mapStoreErr(err)
+		}
+		return s.enqueueTransition(ctx, offercontracts.EventTypeSubmitted, "submitted", offer, requester, providerUserID)
+	}
+	if err := s.runMaybeTx(ctx, commit); err != nil {
+		if errors.Is(err, errConflict) {
 			existing, findErr := s.store.FindSubmitted(ctx, content.NeedID, content.ServiceID)
 			if findErr == nil && existing.ProviderUserID == providerUserID {
 				return existing, nil
 			}
 			return Offer{}, errConflict
 		}
-		return Offer{}, mapStoreErr(err)
+		return Offer{}, err
 	}
 	return offer, nil
 }
@@ -144,17 +167,51 @@ func (s *Service) Accept(ctx context.Context, requesterUserID, needID, offerID I
 	if err := s.assertNeedOwner(ctx, needID, requesterUserID); err != nil {
 		return Offer{}, err
 	}
-	need, err := s.requireOpenNeed(ctx, needID)
+	if _, err := s.requireOpenNeed(ctx, needID); err != nil {
+		return Offer{}, err
+	}
+	current, err := s.get(ctx, offerID)
 	if err != nil {
 		return Offer{}, err
 	}
-	_ = need
-	if s == nil || s.store == nil {
-		return Offer{}, errStoreRequired
+	if current.NeedID != needID {
+		return Offer{}, errNotFound
 	}
-	got, err := s.store.AcceptExclusive(ctx, offerID, needID, s.now().UTC())
+	if current.Status == StatusAccepted {
+		return current, nil
+	}
+	submittedSiblings := []Offer{}
+	all, err := s.listByNeed(ctx, needID)
 	if err != nil {
-		return Offer{}, mapStoreErr(err)
+		return Offer{}, err
+	}
+	for _, o := range all {
+		if o.ID != offerID && o.Status == StatusSubmitted {
+			submittedSiblings = append(submittedSiblings, o)
+		}
+	}
+	var got Offer
+	commit := func(ctx context.Context) error {
+		accepted, err := s.store.AcceptExclusive(ctx, offerID, needID, s.now().UTC())
+		if err != nil {
+			return mapStoreErr(err)
+		}
+		got = accepted
+		if accepted.Status != StatusAccepted {
+			return nil
+		}
+		if err := s.enqueueTransition(ctx, offercontracts.EventTypeAccepted, "accepted", accepted, requesterUserID, requesterUserID); err != nil {
+			return err
+		}
+		for _, sibling := range submittedSiblings {
+			if err := s.enqueueTransition(ctx, offercontracts.EventTypeRejected, "rejected", sibling, requesterUserID, requesterUserID); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := s.runMaybeTx(ctx, commit); err != nil {
+		return Offer{}, err
 	}
 	return got, nil
 }
@@ -177,10 +234,51 @@ func (s *Service) Reject(ctx context.Context, requesterUserID, needID, offerID I
 	if err != nil {
 		return Offer{}, err
 	}
-	if err := s.store.Update(ctx, next, current.UpdatedAt); err != nil {
-		return Offer{}, mapStoreErr(err)
+	commit := func(ctx context.Context) error {
+		if err := s.store.Update(ctx, next, current.UpdatedAt); err != nil {
+			return mapStoreErr(err)
+		}
+		return s.enqueueTransition(ctx, offercontracts.EventTypeRejected, "rejected", next, requesterUserID, requesterUserID)
+	}
+	if err := s.runMaybeTx(ctx, commit); err != nil {
+		return Offer{}, err
 	}
 	return next, nil
+}
+
+func (s *Service) enqueueTransition(ctx context.Context, eventType, transition string, offer Offer, requesterUserID, actorUserID ID) error {
+	if s == nil || s.outbox == nil {
+		return nil
+	}
+	ev, err := encodeOfferTransition(eventType, transition, offer, requesterUserID, actorUserID)
+	if err != nil {
+		return err
+	}
+	if _, err := s.outbox.Enqueue(ctx, nil, ev); err != nil {
+		if errors.Is(err, outbox.ErrConflict) {
+			return nil
+		}
+		return mapStoreErr(err)
+	}
+	return nil
+}
+
+func (s *Service) runMaybeTx(ctx context.Context, fn func(context.Context) error) error {
+	if s.outbox != nil && s.tx != nil && db.TxFrom(ctx) == nil {
+		tx, err := s.tx.Begin(ctx)
+		if err != nil {
+			return mapStoreErr(err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		if err := fn(tx.Context(ctx)); err != nil {
+			return err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return mapStoreErr(err)
+		}
+		return nil
+	}
+	return fn(ctx)
 }
 
 func (s *Service) ProviderNeedView(ctx context.Context, providerUserID, needID, businessID, serviceID ID) (needcontracts.NeedRef, error) {
@@ -387,6 +485,10 @@ func mapStoreErr(err error) error {
 		errors.Is(err, errInvalidPrice) || errors.Is(err, errForbidden) ||
 		errors.Is(err, errNotEligible) {
 		return err
+	}
+	if errors.Is(err, outbox.ErrUnavailable) || errors.Is(err, outbox.ErrInvalidEvent) ||
+		errors.Is(err, outbox.ErrSensitivePayload) {
+		return errUnavailable
 	}
 	return errUnavailable
 }

@@ -2,7 +2,7 @@
 
 Provider-neutral product/privacy foundation for KONUMLU notifications. This document is **not** legal advice and does not encode unreviewed KVKK/İYS conclusions.
 
-**Package status:** `NOTIFY_A_APPLICATION_READY_FOR_REVIEW`
+**Package status:** NOTIFY-A frozen. NOTIFY-B producers + provider-neutral dispatch foundation: `NOTIFY_B_APPLICATION_READY_FOR_REVIEW` (not vendor-ready).
 
 Additive schema `000052_notifications_policy_core` is **unchanged after approval**. Preference/consent/inbox HTTP, PostgreSQL stores, AUTH-C selected-event materialization, and in-app channel planning are implemented. External email/SMS/push providers remain unselected. This is **not** production notification readiness.
 
@@ -22,18 +22,19 @@ Additive schema `000052_notifications_policy_core` is **unchanged after approval
 | `notifications.channel_deliveries` (000052) | Per-channel delivery/suppression lifecycle. |
 | `notifications.inbox_items` (000052) | In-app inbox row with `read_at`; composite FK to intent recipient. |
 
-**Still absent:** push endpoints, provider dispatch (NOTIFY-B), historical backfill, consumer UI.
+**Still absent:** durable push endpoint tables (deferred; no 000053), production email/SMS/push vendors, historical backfill, consumer UI, moderation warning cutover.
 
 ### Code
 
-- `internal/notifications` — legacy outbox `notifications.intent` v1 and `notifications.moderation.warning` v1 unchanged; `DeliveryService` for **verification_challenge** email/SMS only; new PostgreSQL stores for 000052 tables; `Materializer` plans `intents` + `channel_deliveries` + `inbox_items` in one transaction; AUTH-C consumer materializes selected security events.
-- `internal/notifications/policy` — catalog + per-channel preference resolver. Durable model is `(channel, scope_type, scope_key)`. No row means catalog default. Stored `enabled=false` does not mute server-required channels.
-- `internal/notifications/httpapi` — session CSRF/Origin consumer APIs for preferences, consents, inbox.
-- `internal/identity/contracts.NotificationEligibilityReader` — verified email/phone **booleans** only; no contact copy into Notifications.
-- `internal/infrastructure/notifications` — provider-neutral email/SMS adapters (`disabled` / `external`). No vendor SDK.
-- Identity signup/reset enqueue `notifications.intent` in the same PostgreSQL transaction as the challenge (producer channel = identifier kind). **OTP stays on this legacy path.**
-- Moderation warning enqueue remains legacy `notifications.moderation.warning` v1 for NOTIFY-A (not cut over to `notifications.intents`).
-- AUTH-C still emits `identity.auth.security` v1. Worker runs Identity audit logging then Notifications materialization as a **single sequential handler** (one outbox consumer; notify failure retries the row).
+- `internal/notifications` — legacy `notifications.intent` v1 and `notifications.moderation.warning` v1 unchanged; `DeliveryService` remains verification-only; `Materializer` plans 000052 rows; `Dispatcher` claims `channel_deliveries` (email/SMS/push) with SKIP LOCKED; AUTH-C + marketplace consumers materialize selected events.
+- `internal/notifications/policy` — one catalog remains authoritative. Durable model is `(channel, scope_type, scope_key)`. No row means catalog default. Stored `enabled=false` does not mute server-required channels.
+- `internal/notifications/httpapi` — session CSRF/Origin consumer APIs for preferences, consents, inbox. **No public send-notification API. No push registration HTTP.**
+- `internal/identity/contracts.NotificationEligibilityReader` — verified email/phone **booleans**. `NotificationContactResolver` returns a verified destination **in memory only** for the dispatcher (not HTTP, not stored, redacted in fmt).
+- `internal/infrastructure/notifications` — verification email/SMS adapters (`disabled` / `external`). New notification `ChannelSender` ports are separate. No vendor SDK.
+- Identity signup/reset enqueue `notifications.intent` in the same PostgreSQL transaction as the challenge. **OTP stays on this legacy path.**
+- Moderation warning remains legacy `notifications.moderation.warning` v1 (not cut over; avoids double-notify).
+- AUTH-C still emits `identity.auth.security` v1. Worker runs Identity audit logging then Notifications materialization as a **single sequential handler**.
+- `cmd/worker` also registers marketplace domain events and a sibling dispatcher poll loop (does not starve outbox `RunWorkers`).
 - Consumer web has **no** notification inbox/preferences UI.
 - No push token / device registration tables or HTTP.
 
@@ -45,7 +46,7 @@ Additive schema `000052_notifications_policy_core` is **unchanged after approval
 | `notifications.moderation.warning` | 1 | Moderation warning execute |
 | `identity.auth.security` | 1 | AUTH-C (audit + selected user notifications) |
 
-Offers, transactions, deliveries, disputes, messaging, saved search **do not** enqueue notification intents.
+Marketplace producers enqueue **domain** outbox events (not client-invented names). `cmd/worker` maps them to catalog events and `MaterializeFanout` (actor excluded). Saved-search match is **deferred** (no upstream match event).
 
 ### Preference / consent storage
 
@@ -208,17 +209,19 @@ Existing `notifications.intent` v1 stays for verification. Do not put verificati
 
 ---
 
-## 11. Delivery lifecycle (NOTIFY-A planning)
+## 11. Delivery lifecycle
 
 `pending` → (`processing`) → `accepted` | `retryable_failed` | `permanently_failed` | `suppressed`
 
-NOTIFY-A channel planning:
-
-| Channel | Eligible behavior | Notes |
+| Channel | Eligible planning | Dispatch |
 |---|---|---|
-| `in_app` | `accepted` only after inbox row commits in the same transaction | `accepted` ≠ read |
-| `email` / `sms` | persist `pending` | waiting for NOTIFY-B/provider worker; never fake success |
-| `web_push` / `mobile_push` | `suppressed` / `channel_unavailable` | no endpoint registration |
+| `in_app` | `accepted` only after inbox row commits in the same transaction | not sent externally (`accepted` ≠ read) |
+| `email` / `sms` | persist `pending` + `next_attempt_at` | provider-neutral `Dispatcher` claims with SKIP LOCKED; never fake success |
+| `web_push` / `mobile_push` | `suppressed` / `channel_unavailable` | no pending row without a destination; no endpoint table |
+
+Claim: bounded batch, `FOR UPDATE SKIP LOCKED`, channels with a configured `ChannelSender` only. Unconfigured production adapters **do not claim** (rows stay `pending`; one operational log per poll loop). No Redis delivery truth.
+
+**Processing recovery without `lease_until`:** stranded `processing` rows are reclaimable when `updated_at <= now - processing_hold` (worker uses `OUTBOX_LEASE` as the hold). This is why 000053 was not required for dispatch.
 
 No accepted → pending. No suppressed → accepted without a new plan.
 
@@ -242,7 +245,11 @@ Messaging uses **message id**, not conversation id. Outbox `idempotency_key` rem
 
 ## 14. Destination eligibility
 
-Email/SMS require Identity verified+active identifier via **contract** (`NotificationEligibilityReader`). Unverified address/phone → `no_destination`. Push requires a later owned endpoint (NOTIFY-B) → `channel_unavailable`. No Identity truth duplication.
+Email/SMS require Identity verified+active identifier via **contract** (`NotificationEligibilityReader` at plan time). Unverified address/phone → `no_destination`. Push without a registered endpoint → `channel_unavailable` (never pending).
+
+At send time the dispatcher resolves the verified canonical contact through `NotificationContactResolver` **in memory**. The value is not written to notification tables and must not be logged (`NotificationContact` redacts fmt).
+
+Consent-required and optional channels are **re-checked at dispatch** (withdrawn consent, current preference, disabled/deleted account). Already persisted in-app inbox rows are not retroactively deleted.
 
 ---
 
@@ -254,19 +261,25 @@ Email/SMS require Identity verified+active identifier via **contract** (`Notific
 
 ## 16. Push endpoints
 
-**Deferred.** No device table in NOTIFY-A. Future shape (NOTIFY-B): user-owned endpoint id, channel `web_push`|`mobile_push`, opaque endpoint handle (not logged), revoked_at, no vendor name in domain.
+**Deferred (no 000053).** Inventory: no web/mobile push registration tables or HTTP exist. Dispatch currently **requires the original endpoint material**, so hashed-only storage is insufficient. A future migration must be provider-neutral (user-owned endpoints, encrypt-at-rest using the existing application keyring, revoked_at, multiple endpoints per user, no browser fingerprinting, no vendor column as domain truth). Until then `web_push`/`mobile_push` stay `channel_unavailable`.
 
 ---
 
 ## 17. Outbox vs domain durability
 
-Domain mutation remains the source of truth. Notification intent is a **derived effect** via `platform.outbox_events` (ADR-003). Core transaction must not wait on provider I/O. Verification and moderation warning already write outbox in the producer transaction because the product requires that durability. Product events (message/offer) should follow the same pattern **after** schema exists. No Kafka/NATS.
+Domain mutation remains the source of truth. Notification intent is a **derived effect** via `platform.outbox_events` (ADR-003). Core transaction must not wait on provider I/O.
+
+Wired producers enqueue a **minimum domain event** in the same `runMaybeTx` as the mutation (`Enqueue` uses `db.TxFrom`). Worker maps those events to catalog types. Outbox retry is idempotent via `UNIQUE(recipient_user_id, dedupe_key)`. No Kafka/NATS.
+
+**Wired:** `messaging.message.received`, `offers.offer.submitted|accepted|rejected`, `transactions.transaction.created|completed|cancelled`, `deliveries.delivery.status_changed`, `disputes.dispute.updated` (create/status apply, not evidence).
+
+**Deferred:** saved-search match (no durable match job), offer withdraw/expired, transaction started (no product notify), moderation warning cutover.
 
 ---
 
 ## 18. Retry
 
-Retry only transient provider/unavailability classes. Consent/preference/unknown/no-destination are permanent. Bounded exponential backoff (cap 8 attempts / 300s in policy helper). No provider status codes in the domain layer. No duplicate intent on retry.
+Retry only adapter error classes (`retryable` / `timeout` / `permanent` / `unconfigured`). Consent/preference/unknown/no-destination are suppressed or permanent, not hot-retried. Bounded exponential backoff (cap 8 attempts / 300s). Unconfigured production senders **do not claim**. No vendor HTTP status codes in the domain layer. No duplicate `accepted` on retry.
 
 ---
 
@@ -393,11 +406,11 @@ HumanChallenge vendor, email vendor, SMS vendor. Push vendor is a separate NOTIF
 
 ---
 
-## 25. Recommended NOTIFY-B
+## 25. Remaining after NOTIFY-B
 
-1. Provider dispatch worker for `channel_deliveries` in `pending` (email/SMS) without fake success
-2. Push endpoint registration model (still no vendor SDK)
-3. Domain producers: messaging, offers, transactions, deliveries, disputes (outbox)
-4. Optional cutover of `notifications.moderation.warning` onto `notifications.intents`
-5. Optional İYS port **after** legal review (fake port locally)
+1. Email/SMS/push **vendor** selection and production adapters (launch blockers)
+2. Push endpoint schema (000053+) after encryption/ownership review
+3. Optional cutover of `notifications.moderation.warning` onto `notifications.intents`
+4. Saved-search match producer (needs an upstream match event)
+5. Optional İYS port **after** legal review
 6. Consumer inbox/preferences UI

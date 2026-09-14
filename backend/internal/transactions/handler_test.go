@@ -64,25 +64,28 @@ func TestCompleteEnqueuesIdempotentCompletedEvent(t *testing.T) {
 	if _, err := svc.Start(context.Background(), fx.requester, txn.ID); err != nil {
 		t.Fatal(err)
 	}
-	if len(enq.events) != 0 {
-		t.Fatalf("start events = %+v", enq.events)
+	if countEvent(enq.events, txncontracts.EventTypeCompleted) != 0 {
+		t.Fatalf("start completed events = %+v", enq.events)
+	}
+	if countEvent(enq.events, txncontracts.EventTypeCreated) != 1 {
+		t.Fatalf("create events = %+v", enq.events)
 	}
 	completed, err := svc.Complete(context.Background(), fx.requester, txn.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(enq.events) != 1 || enq.events[0].EventType != txncontracts.EventTypeCompleted {
+	if countEvent(enq.events, txncontracts.EventTypeCompleted) != 1 {
 		t.Fatalf("complete events = %+v", enq.events)
 	}
-	payload, err := txncontracts.DecodeCompleted(enq.events[0].Payload)
+	payload, err := txncontracts.DecodeCompleted(lastEvent(enq.events, txncontracts.EventTypeCompleted).Payload)
 	if err != nil || payload.NeedID != fx.needID.String() || payload.RequesterUserID != fx.requester.String() {
 		t.Fatalf("payload = %+v err=%v", payload, err)
 	}
 	if _, err := svc.Complete(context.Background(), fx.requester, txn.ID); err != nil {
 		t.Fatal(err)
 	}
-	if len(enq.events) != 1 {
-		t.Fatalf("replay events = %d", len(enq.events))
+	if countEvent(enq.events, txncontracts.EventTypeCompleted) != 1 {
+		t.Fatalf("replay events = %+v", enq.events)
 	}
 	if completed.Status != StatusCompleted {
 		t.Fatalf("status = %s", completed.Status)
@@ -98,7 +101,10 @@ func TestCancelAndIncompleteDoNotEnqueueCompleted(t *testing.T) {
 	if _, err := svc.Cancel(context.Background(), fx.requester, txn.ID); err != nil {
 		t.Fatal(err)
 	}
-	if len(enq.events) != 0 {
+	if countEvent(enq.events, txncontracts.EventTypeCompleted) != 0 {
+		t.Fatalf("cancel completed events = %+v", enq.events)
+	}
+	if countEvent(enq.events, txncontracts.EventTypeCancelled) != 1 {
 		t.Fatalf("cancel events = %+v", enq.events)
 	}
 }
@@ -335,7 +341,7 @@ func (e *fulfillEnv) mustEvent(t *testing.T, txn Transaction) outbox.Event {
 
 func mustCompletedEvent(t *testing.T, txn Transaction) outbox.Event {
 	t.Helper()
-	in, err := encodeCompletedEvent(txn)
+	in, err := encodeCompletedEvent(txn, txn.RequesterUserID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -372,6 +378,26 @@ func (f failingFulfillment) FulfillFromCompletedTransaction(context.Context, nee
 
 type memoryEnqueuer struct {
 	events []outbox.NewEvent
+}
+
+func countEvent(events []outbox.NewEvent, typ string) int {
+	n := 0
+	for _, e := range events {
+		if e.EventType == typ {
+			n++
+		}
+	}
+	return n
+}
+
+func lastEvent(events []outbox.NewEvent, typ string) outbox.NewEvent {
+	var found outbox.NewEvent
+	for _, e := range events {
+		if e.EventType == typ {
+			found = e
+		}
+	}
+	return found
 }
 
 func (e *memoryEnqueuer) Enqueue(_ context.Context, _ outbox.Execer, in outbox.NewEvent) (outbox.Event, error) {

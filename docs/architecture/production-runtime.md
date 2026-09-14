@@ -9,7 +9,7 @@ Do not split domains into separate deployable services. The Go backend remains a
 | Process / component | Role |
 |---|---|
 | `cmd/server` | HTTP API |
-| `cmd/worker` | Outbox relay / async handlers |
+| `cmd/worker` | Outbox relay / async handlers **and** notification `channel_deliveries` dispatcher (sibling poll loop; unconfigured providers do not claim) |
 | PostgreSQL + PostGIS | Durable source of truth |
 | Valkey | Cache, session hot cache, rate limits, presence — never durable truth |
 | S3-compatible object storage | Media objects behind `internal/infrastructure/storage` |
@@ -64,7 +64,7 @@ Auth security audit uses `platform.outbox_events` (`identity.auth.security` v1).
 
 ## Worker / outbox
 
-PostgreSQL transactional outbox + `cmd/worker` poller. No Kafka or other broker. Settings: batch, lease, poll interval, retry base/multiplier/cap/jitter, worker concurrency (competing `SKIP LOCKED` loops). Unknown handlers reschedule with `unknown_handler` and are logged. Shutdown cancels the poll loop; in-flight handler cancellation leaves the lease so another worker can retry. `SHUTDOWN_TIMEOUT` bounds HTTP graceful shutdown on the API process.
+PostgreSQL transactional outbox + `cmd/worker` poller. A second bounded poll loop claims `notifications.channel_deliveries` without starving outbox `RunWorkers`. No Kafka or other broker. Settings: batch, lease (also used as dispatcher processing-hold for stranded `processing` rows), poll interval, retry base/multiplier/cap/jitter, worker concurrency (competing `SKIP LOCKED` loops). Unknown handlers reschedule with `unknown_handler` and are logged. Shutdown cancels both poll loops. `SHUTDOWN_TIMEOUT` bounds HTTP graceful shutdown on the API process.
 
 ## Observability and security
 
@@ -104,4 +104,4 @@ GitHub Actions full pipeline is not introduced by this foundation. No automatic 
 
 Cloud vendor; Kubernetes (not required for V1); OpenTofu/Terraform provider; object-storage product and workload-identity wiring; Staff IdP vendor; official EİDS adapter; email/SMS vendors; push/notification delivery vendors; CDN for processed media; backup retention numbers.
 
-Notification **policy and planning** (purpose, consent vs preference, event catalog, inbox) is in `internal/notifications`. Email/SMS/push vendors are not selected. Eligible email/SMS channel rows stay `pending` for NOTIFY-B. See `docs/architecture/notifications-policy.md`.
+Notification **policy, planning, marketplace producers, and provider-neutral dispatch** live in `internal/notifications` plus domain outbox events. Email/SMS/push vendors are not selected. Unconfigured adapters never mark `accepted`. Push endpoints are not stored. See `docs/architecture/notifications-policy.md` and `docs/operations/NOTIFICATIONS.md`.

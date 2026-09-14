@@ -191,8 +191,16 @@ func (m *Materializer) Materialize(ctx context.Context, in MaterializeInput) (Ma
 				chRow.State = policy.DeliveryAccepted
 			case policy.ChannelEmail, policy.ChannelSMS:
 				chRow.State = policy.DeliveryPending
+				next := now
+				chRow.NextAttemptAt = &next
+			case policy.ChannelWebPush, policy.ChannelMobilePush:
+				chRow.State = policy.DeliverySuppressed
+				reason := policy.SuppressChannelUnavailable
+				chRow.SuppressionReason = &reason
 			default:
-				chRow.State = policy.DeliveryPending
+				chRow.State = policy.DeliverySuppressed
+				reason := policy.SuppressPolicy
+				chRow.SuppressionReason = &reason
 			}
 		} else {
 			chRow.State = policy.DeliverySuppressed

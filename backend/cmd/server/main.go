@@ -512,6 +512,7 @@ func newBusinessesNeedsAndOffersHTTP(pool *db.Pool, cfg config.Config, sessions 
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
+	offerSvc.SetOutbox(offers.PoolTransactor{Pool: pool}, ob)
 	txnSvc.SetOutbox(transactions.PoolTransactor{Pool: pool}, ob)
 	txnHandler, err := transactionshttp.New(identityTransactionsSessions{sessions: sessions}, txnSvc, cfg.WebAuthnRPOrigins)
 	if err != nil {
@@ -529,6 +530,7 @@ func newBusinessesNeedsAndOffersHTTP(pool *db.Pool, cfg config.Config, sessions 
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
+	delSvc.SetOutbox(deliveries.PoolTransactor{Pool: pool}, ob)
 	delHandler, err := deliverieshttp.New(identityDeliveriesSessions{sessions: sessions}, delSvc, cfg.WebAuthnRPOrigins)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, nil, err
@@ -537,6 +539,7 @@ func newBusinessesNeedsAndOffersHTTP(pool *db.Pool, cfg config.Config, sessions 
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
+	dispSvc.SetOutbox(disputes.PoolTransactor{Pool: pool}, ob)
 	dispHandler, err := disputeshttp.New(identityDisputesSessions{sessions: sessions}, dispSvc, cfg.WebAuthnRPOrigins)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, nil, err
@@ -1016,6 +1019,18 @@ func newMessagingHTTP(pool *db.Pool, cfg config.Config, sessions *identity.Sessi
 	if err != nil {
 		return nil, err
 	}
+	ob, err := outbox.New(outbox.NewPostgresStore(pool), outbox.Policy{
+		BatchSize:         cfg.OutboxBatchSize,
+		Lease:             cfg.OutboxLease,
+		BackoffBase:       cfg.OutboxRetryBase,
+		BackoffMultiplier: cfg.OutboxRetryMultiplier,
+		BackoffCap:        cfg.OutboxRetryCap,
+		Jitter:            cfg.OutboxRetryJitter,
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	svc.SetOutbox(messaging.PoolTransactor{Pool: pool}, ob)
 	return messaginghttp.New(identityMessagingSessions{sessions: sessions}, svc, cfg.WebAuthnRPOrigins)
 }
 

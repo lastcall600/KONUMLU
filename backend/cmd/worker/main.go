@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 
 	"backend/internal/identity"
@@ -58,7 +59,7 @@ func run() error {
 		return fmt.Errorf("database: %w", err)
 	}
 
-	relay, err := newRelay(ctx, cfg, pool)
+	relay, dispatcher, err := newRelay(ctx, cfg, pool)
 	if err != nil {
 		return fmt.Errorf("outbox: %w", err)
 	}
@@ -69,67 +70,83 @@ func run() error {
 	if blockers := cfg.AuthProviderLaunchBlockers(); len(blockers) > 0 {
 		slog.Info("auth_provider_launch_blocked", "blockers", blockers)
 	}
-	if err := relay.RunWorkers(ctx, cfg.OutboxWorkerConcurrency); err != nil {
-		return fmt.Errorf("outbox: %w", err)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := relay.RunWorkers(ctx, cfg.OutboxWorkerConcurrency); err != nil && ctx.Err() == nil {
+			slog.Info("outbox", "detail", err.Error())
+		}
+	}()
+	if dispatcher != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := dispatcher.Run(ctx); err != nil && ctx.Err() == nil {
+				slog.Info("notification_dispatch", "detail", err.Error())
+			}
+		}()
 	}
+	wg.Wait()
 	slog.Info("outbox worker stopped")
 	return nil
 }
 
-func newRelay(ctx context.Context, cfg config.Config, pool *db.Pool) (*outbox.Relay, error) {
+func newRelay(ctx context.Context, cfg config.Config, pool *db.Pool) (*outbox.Relay, *notifications.Dispatcher, error) {
 	store := outbox.NewPostgresStore(pool)
 	ob, err := outbox.New(store, outboxPolicy(cfg), nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	notifyStore := notifications.NewPostgresStore(pool)
 	resolver, err := newIdentityDeliveryResolver(cfg, pool)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	wiring, err := productionNotificationsWiring(cfg, resolver)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	delivery, err := notifications.NewDeliveryService(notifyStore, wiring.Resolver, wiring.Email, wiring.SMS, nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	processHandler, mediaSvc, err := newMediaProcessHandler(cfg, pool)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	searchHandler, err := newSearchProjectionHandler(pool)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	trustHandler, err := newTrustProjectionHandler(pool)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	reviewAggHandler, err := newReviewAggregatesHandler(pool)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	completionHandler, err := newTransactionCompletionHandler(pool)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	elig, err := identity.NewNotificationEligibilityReader(identity.NewPostgresStore(pool))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	materializer, err := notifications.NewMaterializer(notifyStore, elig, nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	reg, err := newHandlerRegistry(notifyStore, delivery, processHandler, searchHandler, trustHandler, reviewAggHandler, completionHandler, notifications.NewAuthSecurityNotifyHandler(materializer))
+	marketplace := newMarketplaceNotifyHandler(materializer)
+	reg, err := newHandlerRegistry(notifyStore, delivery, processHandler, searchHandler, trustHandler, reviewAggHandler, completionHandler, notifications.NewAuthSecurityNotifyHandler(materializer), marketplace)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	relay, err := outbox.NewRelay(ob, reg, cfg.OutboxPollInterval, nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	relay.SetLogf(func(format string, args ...any) {
 		slog.Info("outbox", "detail", fmt.Sprintf(format, args...))
@@ -137,7 +154,15 @@ func newRelay(ctx context.Context, cfg config.Config, pool *db.Pool) (*outbox.Re
 	if mediaSvc != nil {
 		go media.RunOrphanSweeper(ctx, mediaSvc, 0)
 	}
-	return relay, nil
+	dispatcher, err := notifications.NewDispatcher(notifyStore, materializer, elig, nil, nil, nil, notifications.DispatcherConfig{
+		BatchSize:      cfg.OutboxBatchSize,
+		ProcessingHold: cfg.OutboxLease,
+		PollInterval:   cfg.OutboxPollInterval,
+	}, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	return relay, dispatcher, nil
 }
 
 func outboxPolicy(cfg config.Config) outbox.Policy {
@@ -151,7 +176,7 @@ func outboxPolicy(cfg config.Config) outbox.Policy {
 	}
 }
 
-func newHandlerRegistry(store notifications.DeliveryPersister, delivery *notifications.DeliveryService, process, searchHandler, trustHandler, reviewAggHandler, completionHandler, notifySecurity outbox.Handler) (*outbox.Registry, error) {
+func newHandlerRegistry(store notifications.DeliveryPersister, delivery *notifications.DeliveryService, process, searchHandler, trustHandler, reviewAggHandler, completionHandler, notifySecurity, marketplace outbox.Handler) (*outbox.Registry, error) {
 	h, err := notifications.NewIntentHandler(store, delivery)
 	if err != nil {
 		return nil, err
@@ -194,8 +219,13 @@ func newHandlerRegistry(store notifications.DeliveryPersister, delivery *notific
 	if err := registerReviewAggregateHandlers(reg, reviewAggHandler, trustHandler); err != nil {
 		return nil, err
 	}
-	if err := reg.Register(txncontracts.EventTypeCompleted, txncontracts.EventVersion, completionHandler); err != nil {
+	if err := reg.Register(txncontracts.EventTypeCompleted, txncontracts.EventVersion, sequentialOutboxHandlers{completionHandler, marketplaceCompleted(marketplace)}); err != nil {
 		return nil, err
+	}
+	if marketplace != nil {
+		if err := registerMarketplaceNotify(reg, marketplace); err != nil {
+			return nil, err
+		}
 	}
 	if notifySecurity == nil {
 		return nil, notifications.ErrStoreRequired
