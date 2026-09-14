@@ -22,6 +22,7 @@ var (
 	errProviderRequired = errors.New("notification provider required")
 	errNotFound         = errors.New("notification resource not found")
 	errInvalidQuery     = errors.New("invalid notification query")
+	errConflict         = errors.New("notification conflict")
 )
 
 // Exported sentinels for worker wiring and tests.
@@ -37,6 +38,7 @@ var (
 	ErrProviderRequired = errProviderRequired
 	ErrNotFound         = errNotFound
 	ErrInvalidQuery     = errInvalidQuery
+	ErrConflict         = errConflict
 )
 
 type Status string

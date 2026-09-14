@@ -192,6 +192,9 @@ func applyRuntimeGates(cfg *Config) error {
 	if raw, set := os.LookupEnv(envOutboxWorkerConcurrency); !set || strings.TrimSpace(raw) == "" {
 		return fmt.Errorf("%s must be set in %s", envOutboxWorkerConcurrency, cfg.Environment)
 	}
+	if !cfg.PushEndpoints.Enabled {
+		return fmt.Errorf("%s and %s must be set in %s", envPushEndpointEncryptionKey, envPushEndpointHashKey, cfg.Environment)
+	}
 	return nil
 }
 

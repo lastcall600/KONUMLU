@@ -44,6 +44,14 @@ func setMaterialKeyEnv(t *testing.T) {
 	t.Setenv(envMaterialKeys, "test-v1:"+enc)
 }
 
+func setPushEndpointKeyEnv(t *testing.T) {
+	t.Helper()
+	enc := "ERERERERERERERERERERERERERERERERERERERERERE="
+	hash := "IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI="
+	t.Setenv(envPushEndpointEncryptionKey, enc)
+	t.Setenv(envPushEndpointHashKey, hash)
+}
+
 func TestLoadDefaults(t *testing.T) {
 	t.Setenv(envHTTPAddr, "")
 	t.Setenv(envShutdownTimeout, "")
@@ -134,6 +142,9 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.NotificationsEmailMode != NotificationChannelDisabled || cfg.NotificationsSMSMode != NotificationChannelDisabled {
 		t.Fatalf("notification modes = %q / %q", cfg.NotificationsEmailMode, cfg.NotificationsSMSMode)
+	}
+	if cfg.PushEndpoints.Enabled {
+		t.Fatal("push endpoints must stay disabled without keys")
 	}
 	if !cfg.StaffIDP.Empty() {
 		t.Fatalf("StaffIDP = %+v, want empty", cfg.StaffIDP)
@@ -596,5 +607,41 @@ func TestLoadEmailSESRequiresNonSecretSettings(t *testing.T) {
 	t.Setenv(envEmailSESFrom, "noreply@example.test")
 	if _, err := Load(); err == nil {
 		t.Fatal("production ses requires region")
+	}
+}
+
+func TestLoadPushEndpointKeys(t *testing.T) {
+	t.Setenv(envDatabaseURL, "postgres://konumlu:konumlu@127.0.0.1:5432/konumlu?sslmode=disable")
+	t.Setenv(envSessionIdle, "1h")
+	t.Setenv(envSessionAbsolute, "24h")
+	t.Setenv(envStepUpTTL, "5m")
+	t.Setenv(envWebAuthnCeremonyTTL, "2m")
+	setAuthRateLimitEnv(t)
+	setVerificationSignupEnv(t)
+	setOutboxEnv(t)
+	setMaterialKeyEnv(t)
+	setPushEndpointKeyEnv(t)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.PushEndpoints.Enabled || len(cfg.PushEndpoints.EncryptionKey) != 32 || len(cfg.PushEndpoints.HashKey) != 32 {
+		t.Fatalf("push endpoints = %+v", cfg.PushEndpoints.String())
+	}
+	if strings.Contains(cfg.String(), "ERE") || strings.Contains(cfg.GoString(), "IiI") {
+		t.Fatalf("string leaked keys: %s", cfg.String())
+	}
+	t.Setenv(envPushEndpointHashKey, "")
+	if _, err := Load(); err == nil {
+		t.Fatal("partial push keys")
+	}
+}
+
+func TestProductionRequiresPushEndpointKeys(t *testing.T) {
+	setProductionRequiredEnv(t)
+	t.Setenv(envPushEndpointEncryptionKey, "")
+	t.Setenv(envPushEndpointHashKey, "")
+	if _, err := Load(); err == nil {
+		t.Fatal("production requires push endpoint keys")
 	}
 }

@@ -169,6 +169,18 @@ func TestNotificationDestinationsAndConsentEvidenceAreRedacted(t *testing.T) {
 	if RedactAttrValue("push_token", "ExponentPushToken[synth]") != Redacted {
 		t.Fatal("push token")
 	}
+	if RedactAttrValue("p256dh", "synth-p256dh") != Redacted || RedactAttrValue("web_push_endpoint", "https://fcm.googleapis.com/x") != Redacted {
+		t.Fatal("web push material")
+	}
+	if RedactAttrValue("apns_token", "apns-synth") != Redacted || RedactAttrValue("fcm_token", "fcm-synth") != Redacted {
+		t.Fatal("mobile tokens")
+	}
+	if RedactAttrValue("PUSH_ENDPOINT_ENCRYPTION_KEY", "key") != Redacted || RedactAttrValue("endpoint_ciphertext", "ct") != Redacted {
+		t.Fatal("push encryption fields")
+	}
+	if !IsSafeLogKey("endpoint_id") || !IsSafeLogKey("push_platform") {
+		t.Fatal("safe push metadata keys")
+	}
 	if !IsSafeLogKey("suppression_reason") || !IsSafeLogKey("notify_purpose") || !IsSafeLogKey("notification_event") {
 		t.Fatal("safe notification metrics keys")
 	}

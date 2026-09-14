@@ -9,8 +9,9 @@ import (
 )
 
 type ConsumerService struct {
-	store *PostgresStore
-	now   func() time.Time
+	store     *PostgresStore
+	endpoints *EndpointService
+	now       func() time.Time
 }
 
 func NewConsumerService(store *PostgresStore, now func() time.Time) (*ConsumerService, error) {
@@ -21,6 +22,13 @@ func NewConsumerService(store *PostgresStore, now func() time.Time) (*ConsumerSe
 		now = func() time.Time { return time.Now().UTC() }
 	}
 	return &ConsumerService{store: store, now: now}, nil
+}
+
+func (s *ConsumerService) WithEndpoints(e *EndpointService) *ConsumerService {
+	if s != nil {
+		s.endpoints = e
+	}
+	return s
 }
 
 func (s *ConsumerService) GetPreferences(ctx context.Context, userID ID) ([]policy.EffectivePreference, error) {
@@ -164,4 +172,25 @@ func (s *ConsumerService) MarkAllRead(ctx context.Context, userID ID) error {
 	}
 	_, err := s.store.MarkAllInboxRead(ctx, userID, s.now())
 	return err
+}
+
+func (s *ConsumerService) RegisterPushEndpoint(ctx context.Context, userID ID, in PushRegistration) (PushEndpointView, error) {
+	if s.endpoints == nil {
+		return PushEndpointView{}, errUnavailable
+	}
+	return s.endpoints.Register(ctx, userID, in)
+}
+
+func (s *ConsumerService) ListPushEndpoints(ctx context.Context, userID ID) ([]PushEndpointView, error) {
+	if s.endpoints == nil {
+		return nil, errUnavailable
+	}
+	return s.endpoints.List(ctx, userID)
+}
+
+func (s *ConsumerService) RevokePushEndpoint(ctx context.Context, userID, endpointID ID) (PushEndpointView, error) {
+	if s.endpoints == nil {
+		return PushEndpointView{}, errUnavailable
+	}
+	return s.endpoints.Revoke(ctx, userID, endpointID)
 }

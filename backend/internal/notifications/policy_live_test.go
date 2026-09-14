@@ -36,6 +36,7 @@ func liveNotifyPool(t *testing.T) *db.Pool {
 }
 
 func cleanupNotifyUser(ctx context.Context, pool *db.Pool, userID ID) {
+	_, _ = pool.Exec(ctx, `DELETE FROM notifications.push_endpoints WHERE user_id = $1`, userID)
 	_, _ = pool.Exec(ctx, `DELETE FROM notifications.inbox_items WHERE user_id = $1`, userID)
 	_, _ = pool.Exec(ctx, `DELETE FROM notifications.channel_deliveries WHERE intent_id IN (SELECT id FROM notifications.intents WHERE recipient_user_id = $1)`, userID)
 	_, _ = pool.Exec(ctx, `DELETE FROM notifications.intents WHERE recipient_user_id = $1`, userID)

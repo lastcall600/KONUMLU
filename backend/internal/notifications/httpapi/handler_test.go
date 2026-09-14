@@ -32,6 +32,7 @@ type memConsumer struct {
 	prefs map[string][]policy.EffectivePreference
 	cons  map[string][]policy.ConsentSnapshot
 	inbox map[string][]notifications.InboxRow
+	push  map[string][]notifications.PushEndpointView
 }
 
 func newMemConsumer() *memConsumer {
@@ -39,6 +40,7 @@ func newMemConsumer() *memConsumer {
 		prefs: map[string][]policy.EffectivePreference{},
 		cons:  map[string][]policy.ConsentSnapshot{},
 		inbox: map[string][]notifications.InboxRow{},
+		push:  map[string][]notifications.PushEndpointView{},
 	}
 }
 
@@ -126,6 +128,55 @@ func (m *memConsumer) MarkAllRead(_ context.Context, userID notifications.ID) er
 	return nil
 }
 
+func (m *memConsumer) RegisterPushEndpoint(_ context.Context, userID notifications.ID, in notifications.PushRegistration) (notifications.PushEndpointView, error) {
+	if err := notifications.ValidatePushRegistration(in); err != nil {
+		return notifications.PushEndpointView{}, err
+	}
+	now := time.Date(2026, 9, 14, 2, 0, 0, 0, time.UTC)
+	rows := m.push[userID.String()]
+	for i, row := range rows {
+		if row.Channel == in.Channel && row.Platform == in.Platform && row.Provider == in.Provider && !row.Revoked {
+			row.LastSeenAt = now
+			rows[i] = row
+			m.push[userID.String()] = rows
+			return row, nil
+		}
+	}
+	id, err := notifications.NewID()
+	if err != nil {
+		return notifications.PushEndpointView{}, err
+	}
+	view := notifications.PushEndpointView{
+		ID: id, Channel: in.Channel, Platform: in.Platform, Provider: in.Provider,
+		CreatedAt: now, LastSeenAt: now,
+	}
+	m.push[userID.String()] = append(rows, view)
+	return view, nil
+}
+
+func (m *memConsumer) ListPushEndpoints(_ context.Context, userID notifications.ID) ([]notifications.PushEndpointView, error) {
+	out := make([]notifications.PushEndpointView, 0)
+	for _, row := range m.push[userID.String()] {
+		if !row.Revoked {
+			out = append(out, row)
+		}
+	}
+	return out, nil
+}
+
+func (m *memConsumer) RevokePushEndpoint(_ context.Context, userID, endpointID notifications.ID) (notifications.PushEndpointView, error) {
+	rows := m.push[userID.String()]
+	for i, row := range rows {
+		if row.ID == endpointID {
+			row.Revoked = true
+			rows[i] = row
+			m.push[userID.String()] = rows
+			return row, nil
+		}
+	}
+	return notifications.PushEndpointView{}, notifications.ErrNotFound
+}
+
 func mustID(t *testing.T) notifications.ID {
 	t.Helper()
 	id, err := notifications.NewID()
@@ -195,6 +246,8 @@ func TestUnauthenticatedRejected(t *testing.T) {
 		{http.MethodPost, "/v1/notification-consents"},
 		{http.MethodGet, "/v1/notifications"},
 		{http.MethodPost, "/v1/notifications/read-all"},
+		{http.MethodPost, "/v1/push-endpoints"},
+		{http.MethodGet, "/v1/push-endpoints"},
 	}
 	for _, p := range paths {
 		rec := do(t, h, p.method, p.path, allowedOrigin, map[string]any{}, nil, withCSRF())
@@ -321,5 +374,118 @@ func TestUnknownConsentTypeRejected(t *testing.T) {
 	}, authed("a"), withCSRF())
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func webPushBody() map[string]any {
+	return map[string]any{
+		"channel":  "web_push",
+		"platform": "web",
+		"provider": "webpush",
+		"endpoint": "https://push.example.test/subscription/abc",
+		"p256dh":   "BNcRdreALRFGKhHy8pL7jHwGNBXne2j5ROqE5m8xN8wG1k2o3p4q5r6s7t8u9v0w1",
+		"auth":     "tBHItJI5svbpez7KI4CCXg",
+	}
+}
+
+func TestPushEndpointHTTPSecurity(t *testing.T) {
+	a, b := mustID(t), mustID(t)
+	h := testHandler(t, a, b, newMemConsumer())
+	body := webPushBody()
+
+	rec := do(t, h, http.MethodPost, "/v1/push-endpoints", allowedOrigin, body, nil, withCSRF())
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("unauth register = %d", rec.Code)
+	}
+	rec = do(t, h, http.MethodPost, "/v1/push-endpoints", "", body, authed("a"), withCSRF())
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("missing origin = %d", rec.Code)
+	}
+	rec = do(t, h, http.MethodPost, "/v1/push-endpoints", "https://evil.example", body, authed("a"), withCSRF())
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("wrong origin = %d", rec.Code)
+	}
+	rec = do(t, h, http.MethodPost, "/v1/push-endpoints", allowedOrigin, body, authed("a"))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("missing csrf = %d", rec.Code)
+	}
+	rec = do(t, h, http.MethodPost, "/v1/push-endpoints", allowedOrigin, map[string]any{
+		"userId": a.String(), "channel": "web_push", "platform": "web", "provider": "webpush",
+		"endpoint": "https://push.example.test/subscription/abc",
+		"p256dh":   "BNcRdreALRFGKhHy8pL7jHwGNBXne2j5ROqE5m8xN8wG1k2o3p4q5r6s7t8u9v0w1",
+		"auth":     "tBHItJI5svbpez7KI4CCXg",
+	}, authed("a"), withCSRF())
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("userId body = %d %s", rec.Code, rec.Body.String())
+	}
+	rec = do(t, h, http.MethodPost, "/v1/push-endpoints", allowedOrigin, map[string]any{
+		"channel": "mobile_push", "platform": "web", "provider": "fcm", "token": "aaaaaaaaaaaaaaaa",
+	}, authed("a"), withCSRF())
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("unsupported combo = %d %s", rec.Code, rec.Body.String())
+	}
+	rec = do(t, h, http.MethodPost, "/v1/push-endpoints", allowedOrigin, map[string]any{
+		"channel": "mobile_push", "platform": "android", "provider": "fcm", "token": "short",
+	}, authed("a"), withCSRF())
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("short token = %d", rec.Code)
+	}
+	tooLong := strings.Repeat("a", 5000)
+	rec = do(t, h, http.MethodPost, "/v1/push-endpoints", allowedOrigin, map[string]any{
+		"channel": "mobile_push", "platform": "android", "provider": "fcm", "token": tooLong,
+	}, authed("a"), withCSRF())
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("huge token = %d", rec.Code)
+	}
+
+	rec = do(t, h, http.MethodPost, "/v1/push-endpoints", allowedOrigin, body, authed("a"), withCSRF())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("register = %d %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "p256dh") || strings.Contains(rec.Body.String(), "subscription/abc") || strings.Contains(rec.Body.String(), `"auth"`) {
+		t.Fatalf("raw material returned: %s", rec.Body.String())
+	}
+	rec = do(t, h, http.MethodGet, "/v1/push-endpoints", "", nil, authed("b"))
+	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), `"web_push"`) {
+		t.Fatalf("b listed a endpoints: %s", rec.Body.String())
+	}
+	rec = do(t, h, http.MethodGet, "/v1/push-endpoints", "", nil, authed("a"))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"web_push"`) {
+		t.Fatalf("list a = %s", rec.Body.String())
+	}
+	var listed struct {
+		Endpoints []struct{ ID string `json:"id"` }
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil || len(listed.Endpoints) != 1 {
+		t.Fatalf("list decode %s", rec.Body.String())
+	}
+	rec = do(t, h, http.MethodDelete, "/v1/push-endpoints/"+listed.Endpoints[0].ID, allowedOrigin, nil, authed("b"), withCSRF())
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("b revoke a = %d", rec.Code)
+	}
+	rec = do(t, h, http.MethodDelete, "/v1/push-endpoints/"+listed.Endpoints[0].ID, allowedOrigin, nil, authed("a"), withCSRF())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("revoke = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestLogoutSessionLossDoesNotRevokePushEndpoint(t *testing.T) {
+	a := mustID(t)
+	svc := newMemConsumer()
+	h := testHandler(t, a, mustID(t), svc)
+	rec := do(t, h, http.MethodPost, "/v1/push-endpoints", allowedOrigin, webPushBody(), authed("a"), withCSRF())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("register = %d %s", rec.Code, rec.Body.String())
+	}
+	rec = do(t, h, http.MethodGet, "/v1/push-endpoints", "", nil, nil)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("logged-out list = %d", rec.Code)
+	}
+	if len(svc.push[a.String()]) != 1 || svc.push[a.String()][0].Revoked {
+		t.Fatal("logout must not revoke stored endpoints")
+	}
+	rec = do(t, h, http.MethodGet, "/v1/push-endpoints", "", nil, authed("a"))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"web_push"`) {
+		t.Fatalf("re-login list = %s", rec.Body.String())
 	}
 }

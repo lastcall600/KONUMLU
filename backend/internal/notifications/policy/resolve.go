@@ -2,7 +2,9 @@ package policy
 
 import "time"
 
-// DestinationState is Identity-derived eligibility. Notifications does not store contact.
+// DestinationState is eligibility for channel planning. Email/SMS come from
+// Identity-verified contacts. Web/mobile push come from active Notifications
+// push endpoints (not Identity).
 type DestinationState struct {
 	EmailVerified   bool
 	PhoneVerified   bool

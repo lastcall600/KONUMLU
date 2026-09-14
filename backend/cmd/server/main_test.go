@@ -33,6 +33,7 @@ import (
 	"backend/internal/payments"
 	paymentshttp "backend/internal/payments/httpapi"
 	"backend/internal/platform/config"
+	platcrypto "backend/internal/platform/crypto"
 	"backend/internal/platform/health"
 	"backend/internal/platform/observability"
 	"backend/internal/staffauth"
@@ -216,6 +217,28 @@ func TestServerConstructsMaterialProtectorFromConfig(t *testing.T) {
 	p, err := identity.NewMaterialProtectorFromDecodedKeys("v1", map[string][]byte{"v1": key})
 	if err != nil || p == nil {
 		t.Fatalf("protector err = %v", err)
+	}
+}
+
+func TestServerConstructsPushEndpointAEADFromConfig(t *testing.T) {
+	key := bytes.Repeat([]byte{0x11}, 32)
+	kr, err := platcrypto.NewSingleKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kr.ActiveID() != "v1" {
+		t.Fatalf("push encryption key id = %q, want v1", kr.ActiveID())
+	}
+	aead, err := platcrypto.NewAEAD(kr)
+	if err != nil || aead == nil {
+		t.Fatalf("aead err = %v", err)
+	}
+	hmacKey, err := platcrypto.NewHMACKey(bytes.Repeat([]byte{0x22}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := hmacKey.Sum([]byte("x")); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -38,6 +38,7 @@ func setProductionRequiredEnv(t *testing.T) {
 	t.Setenv("OBJECT_STORAGE_ACCESS_KEY", "access-key")
 	t.Setenv("OBJECT_STORAGE_SECRET_KEY", "object-secret-xyz")
 	t.Setenv("OBJECT_STORAGE_UPLOAD_TTL", "15m")
+	setPushEndpointKeyEnv(t)
 }
 
 func TestLoadRejectsUnknownEnvironment(t *testing.T) {
@@ -199,6 +200,9 @@ func TestConfigLogValueOmitsSecrets(t *testing.T) {
 	out := b.String()
 	if strings.Contains(out, "super-secret-db") || strings.Contains(out, "postgres://") || strings.Contains(out, "object-secret-xyz") || strings.Contains(out, "turnstile-secret-must-not-leak") || strings.Contains(out, "netgsm-secret-must-not-leak") {
 		t.Fatalf("log leaked secrets: %s", out)
+	}
+	if strings.Contains(out, "ERERERERERERERERERERERERERERERERERERERERERE=") || strings.Contains(out, "IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI=") {
+		t.Fatalf("log leaked push keys: %s", out)
 	}
 	if strings.Contains(cfg.String(), "super-secret-db") || strings.Contains(cfg.String(), "object-secret-xyz") || strings.Contains(cfg.String(), "turnstile-secret-must-not-leak") || strings.Contains(cfg.String(), "netgsm-secret-must-not-leak") {
 		t.Fatalf("String leaked: %s", cfg.String())

@@ -1,6 +1,6 @@
-# Notification operations (NOTIFY-A / NOTIFY-B)
+# Notification operations (NOTIFY-A / NOTIFY-B / NOTIFY-C)
 
-This is not legal advice. Transactional email uses Amazon SES when `NOTIFICATIONS_EMAIL_MODE=external` and `EMAIL_PROVIDER=ses`. Transactional SMS and Identity OTP SMS use Netgsm when `NOTIFICATIONS_SMS_MODE=external` and `SMS_PROVIDER=netgsm`. Push vendors are **not selected**. Do not treat push dispatch as production-ready. Netgsm live credentials are not committed (`LIVE_NETGSM_TEST_PENDING`).
+This is not legal advice. Transactional email uses Amazon SES when `NOTIFICATIONS_EMAIL_MODE=external` and `EMAIL_PROVIDER=ses`. Transactional SMS and Identity OTP SMS use Netgsm when `NOTIFICATIONS_SMS_MODE=external` and `SMS_PROVIDER=netgsm`. Push **transport** vendors are **not selected**. Durable push **endpoint registration** exists (`000053`). Do not treat push dispatch as production-ready. Netgsm live credentials are not committed (`LIVE_NETGSM_TEST_PENDING`).
 
 ## Processes
 
@@ -57,13 +57,28 @@ Resolved just-in-time from Identity. Never stored on notification rows. Never lo
 
 ## Push
 
-No registration HTTP. No endpoint table. Eligible push channels are suppressed `channel_unavailable`.
+Durable table `notifications.push_endpoints` (000053). Encrypted at rest (AES-256-GCM). HMAC-SHA256 uniqueness. Consumer HTTP:
+
+- `POST /v1/push-endpoints` (CSRF + Origin)
+- `GET /v1/push-endpoints`
+- `DELETE /v1/push-endpoints/{endpointId}` (CSRF + Origin; soft `revoked_at`)
+
+Keys: `PUSH_ENDPOINT_ENCRYPTION_KEY`, `PUSH_ENDPOINT_HASH_KEY` (required in staging/production). Development: omit both to leave registration HTTP unwired; set both to enable. V1 has one encryption key (`endpoint_key_id` = `v1`). Key rotation / previous-key decrypt is **not** implemented.
+
+HMAC uniqueness is `v1|channel|platform|provider|canonical_endpoint_identity` (web = endpoint URL; mobile = opaque token). p256dh/auth live only in ciphertext.
+
+Logout / session revoke does **not** revoke endpoints (V1; no session↔device binding).
+
+No FCM/APNs/WebPush HTTP in this package. Active endpoints make the channel **pending**, never fake `accepted`. Cross-user active hash is rejected (`conflict`). Same-user re-register (including web p256dh/auth refresh) is idempotent on the same row.
+
+Never log tokens, Web Push URLs, p256dh, auth, ciphertext, or keys.
 
 ## What not to do
 
 - Do not add Firebase/APNs/WebPush SDKs without an approved dependency and vendor decision
-- Do not create `000053` without a reviewed schema proposal
 - Do not expose `POST /send-notification`
 - Do not cut over moderation warnings without a double-notify review
 - Do not invent İYS consent inside the Netgsm adapter
 - Do not generate OTP inside the Netgsm adapter
+- Do not store push tokens plaintext
+- Do not treat endpoint registration as a successful send
