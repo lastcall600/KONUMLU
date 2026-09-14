@@ -62,6 +62,15 @@ Detailed architecture diagrams, domain interaction sequence diagrams, data flow 
 | `AUTH-SECURITY.md` | Consumer auth security operations: stuffing, HumanChallenge/email/SMS/Valkey outage, takeover, secret rotation |
 | `TR-COMPLIANCE-GATEWAY.md` | TR gateway operator runbook: key boundary, ingress token, mTLS at proxy, degraded mode, no official adapter yet |
 
+### `/docs/product/` — Product / UI handoff (Figma)
+
+| File | Purpose |
+|---|---|
+| [PRODUCT-UI-HANDOFF.md](./docs/product/PRODUCT-UI-HANDOFF.md) | **Authoritative** Product → Figma → Frontend contract (shell, actors, page contracts, Trust/EİDS/messaging/notification UX, priorities, Figma file structure) |
+| [SCREEN-INVENTORY.md](./docs/product/SCREEN-INVENTORY.md) | Named V1 surfaces, routes, audience, implementation status, P0/P1/P2 |
+| [STATE-MATRICES.md](./docs/product/STATE-MATRICES.md) | Domain/product state machines taken from repository enums |
+| [COMPONENT-INVENTORY.md](./docs/product/COMPONENT-INVENTORY.md) | Semantic design-system components (no visual tokens) |
+
 ### `/docs/security/` — Production security baseline
 
 | File | Purpose |
