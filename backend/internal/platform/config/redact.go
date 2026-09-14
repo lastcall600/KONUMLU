@@ -30,6 +30,10 @@ func (c Config) LogValue() slog.Value {
 		slog.String("email_provider", c.Email.Provider),
 		slog.String("email_ses_region", c.Email.Region),
 		slog.Bool("email_ses_from_configured", c.Email.From != ""),
+		slog.String("sms_provider", c.SMS.Provider),
+		slog.Bool("netgsm_username_configured", c.SMS.Username != ""),
+		slog.Bool("netgsm_password_configured", c.SMS.Password != ""),
+		slog.Bool("netgsm_msgheader_configured", c.SMS.MsgHeader != ""),
 	)
 }
 

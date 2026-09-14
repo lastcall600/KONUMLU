@@ -393,6 +393,55 @@ func TestLoadNotificationChannelModes(t *testing.T) {
 	}
 }
 
+func TestLoadSMSNetgsmRequiresCredentials(t *testing.T) {
+	t.Setenv(envDatabaseURL, "postgres://konumlu:konumlu@127.0.0.1:5432/konumlu?sslmode=disable")
+	t.Setenv(envSessionIdle, "1h")
+	t.Setenv(envSessionAbsolute, "24h")
+	t.Setenv(envStepUpTTL, "5m")
+	t.Setenv(envWebAuthnCeremonyTTL, "2m")
+	setAuthRateLimitEnv(t)
+	setVerificationSignupEnv(t)
+	setOutboxEnv(t)
+	setMaterialKeyEnv(t)
+
+	t.Setenv(envNotificationsSMSMode, "external")
+	if _, err := Load(); err == nil {
+		t.Fatal("external SMS requires SMS_PROVIDER=netgsm")
+	}
+
+	t.Setenv(envSMSProvider, "netgsm")
+	t.Setenv(envNetgsmUsername, "")
+	t.Setenv(envNetgsmPassword, "netgsm-secret-must-not-leak")
+	t.Setenv(envNetgsmMsgHeader, "KONUMLUTEST")
+	if _, err := Load(); err == nil {
+		t.Fatal("netgsm requires username")
+	}
+
+	t.Setenv(envNetgsmUsername, "netgsm-user")
+	t.Setenv(envNetgsmPassword, "")
+	if _, err := Load(); err == nil {
+		t.Fatal("netgsm requires password")
+	}
+
+	t.Setenv(envNetgsmPassword, "netgsm-secret-must-not-leak")
+	t.Setenv(envNetgsmMsgHeader, "")
+	if _, err := Load(); err == nil {
+		t.Fatal("netgsm requires msgheader")
+	}
+
+	t.Setenv(envNetgsmMsgHeader, "KONUMLUTEST")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.SMS.NetgsmWired() || cfg.SMS.Provider != SMSProviderNetgsm {
+		t.Fatalf("sms = %+v", cfg.SMS)
+	}
+	if strings.Contains(cfg.String(), "netgsm-secret-must-not-leak") || strings.Contains(cfg.SMS.String(), "netgsm-secret-must-not-leak") {
+		t.Fatal("sms stringer must not dump password")
+	}
+}
+
 func TestLoadStaffIDPPartialFailsClosed(t *testing.T) {
 	t.Setenv(envDatabaseURL, "postgres://konumlu:konumlu@127.0.0.1:5432/konumlu?sslmode=disable")
 	t.Setenv(envSessionIdle, "1h")

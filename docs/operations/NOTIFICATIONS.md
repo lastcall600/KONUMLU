@@ -1,6 +1,6 @@
 # Notification operations (NOTIFY-A / NOTIFY-B)
 
-This is not legal advice. Transactional email uses Amazon SES when `NOTIFICATIONS_EMAIL_MODE=external` and `EMAIL_PROVIDER=ses`. SMS/push vendors are **not selected**. Do not treat SMS/push dispatch as production-ready.
+This is not legal advice. Transactional email uses Amazon SES when `NOTIFICATIONS_EMAIL_MODE=external` and `EMAIL_PROVIDER=ses`. Transactional SMS and Identity OTP SMS use Netgsm when `NOTIFICATIONS_SMS_MODE=external` and `SMS_PROVIDER=netgsm`. Push vendors are **not selected**. Do not treat push dispatch as production-ready. Netgsm live credentials are not committed (`LIVE_NETGSM_TEST_PENDING`).
 
 ## Processes
 
@@ -17,7 +17,9 @@ When email mode is `disabled`, dispatcher email sender is **nil**. The dispatche
 
 When email mode is `external` with SES wired, the dispatcher claims email `channel_deliveries` only after preference/consent/account-state/JIT destination/suppression re-check. SES is transport only.
 
-Verification OTP still uses the legacy `notifications.intent` + `DeliveryService` path (`disabled` never sent; `external` uses the same SES transport). Do not mix OTP into `notifications.intents.variables`.
+When SMS mode is `external` with Netgsm wired, the dispatcher claims SMS `channel_deliveries` on the same re-check path and calls REST v2 `/sms/rest/v2/send`. Identity verification OTP uses the legacy `notifications.intent` + `DeliveryService` path against REST v2 `/sms/rest/v2/otp`. Do not mix OTP into `notifications.intents.variables`. Do not fall back from `/otp` to `/send`.
+
+Verification OTP still uses the legacy `notifications.intent` + `DeliveryService` path (`disabled` never sent; `external` uses the same Netgsm transport for phone and SES for email).
 
 ## SES email
 
@@ -26,6 +28,20 @@ Verification OTP still uses the legacy `notifications.intent` + `DeliveryService
 - No provider-level exactly-once claim; existing dispatcher backoff is authoritative
 - Credentials: AWS default chain; never committed or logged
 - Operator prerequisites: verified sending domain/identity in the SES region; region-specific sandbox; production access request; DKIM/domain authentication in SES/DNS
+
+## Netgsm SMS
+
+- Provider: Netgsm. REST v2. HTTP Basic Authentication. No SDK.
+- Transactional notifications: `POST https://api.netgsm.com.tr/sms/rest/v2/send`
+- Identity OTP: `POST https://api.netgsm.com.tr/sms/rest/v2/otp` (requires the Netgsm OTP package on the account)
+- `msgheader` is server-owned (`NETGSM_MSGHEADER`). Callers cannot supply a sender header.
+- Credentials (`NETGSM_USERNAME` / `NETGSM_PASSWORD`) are server-only: never logged, never returned, never committed.
+- Accept means Netgsm queued the message, **not** handset delivery. Delivery reporting is not in this package.
+- `jobid` is an opaque string on internal `ProviderRef` only. Do not parse as int/int64. Do not expose publicly.
+- One HTTP call per adapter invocation. No provider-internal retry loop. Dispatcher/outbox own retry/backoff.
+- Ambiguous network timeout after the provider may have accepted is retryable: external SMS is **at-least-once**. `jobid` is not an idempotency key. Provider code `85` is a rate/duplicate threshold, not application exactly-once.
+- This package is not marketing SMS. `iysfilter` is omitted; commercial/İYS policy is not invented here.
+- Operator prerequisites: Netgsm account, API user/password, API permission, approved sender header, SMS credit, OTP package for Identity OTP, optional API IP restriction, safe test destination.
 
 ## Claim / retry
 
@@ -45,7 +61,9 @@ No registration HTTP. No endpoint table. Eligible push channels are suppressed `
 
 ## What not to do
 
-- Do not add Firebase/APNs/WebPush/Twilio SDKs without an approved dependency and vendor decision
+- Do not add Firebase/APNs/WebPush SDKs without an approved dependency and vendor decision
 - Do not create `000053` without a reviewed schema proposal
 - Do not expose `POST /send-notification`
 - Do not cut over moderation warnings without a double-notify review
+- Do not invent İYS consent inside the Netgsm adapter
+- Do not generate OTP inside the Netgsm adapter

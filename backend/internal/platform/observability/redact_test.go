@@ -160,6 +160,9 @@ func TestNotificationDestinationsAndConsentEvidenceAreRedacted(t *testing.T) {
 	if !IsSensitiveKey("push_token") || !IsSensitiveKey("fcm_token") || !IsSensitiveKey("consent_payload") {
 		t.Fatal("expected notification destination keys to be sensitive")
 	}
+	if IsSensitiveKey("netgsm_password") == false || RedactAttrValue("netgsm_password", "x") != Redacted {
+		t.Fatal("netgsm password")
+	}
 	if RedactAttrValue("email", synthEmail) != Redacted || RedactAttrValue("phone", synthPhone) != Redacted {
 		t.Fatal("email/phone")
 	}
@@ -174,6 +177,7 @@ func TestNotificationDestinationsAndConsentEvidenceAreRedacted(t *testing.T) {
 func TestRedactTextCoversRepresentativeSecrets(t *testing.T) {
 	dump := strings.Join([]string{
 		"Authorization: Bearer " + synthBearer,
+		"Authorization: Basic " + synthBearer,
 		"Cookie: __Host-konumlu_session=" + synthSession + "; __Host-konumlu_csrf=" + synthCSRF,
 		"X-CSRF-Token: " + synthCSRF,
 		"otp=" + synthOTP,
@@ -191,6 +195,13 @@ func TestRedactTextCoversRepresentativeSecrets(t *testing.T) {
 	}
 	if !strings.Contains(got, "Bearer "+Redacted) {
 		t.Fatalf("bearer not classified: %s", got)
+	}
+	if RedactText("Authorization: Basic "+synthBearer) != "Authorization: Basic "+Redacted &&
+		!strings.Contains(RedactText("Authorization: Basic "+synthBearer), "Basic "+Redacted) {
+		t.Fatalf("basic auth not classified: %s", RedactText("Authorization: Basic "+synthBearer))
+	}
+	if RedactHeader("Authorization", "Basic "+synthBearer) != Redacted {
+		t.Fatal("authorization basic header")
 	}
 	if strings.Contains(got, "deadbeefsignature") || strings.Contains(got, "AKIAFAKE") {
 		t.Fatalf("signed storage query leaked: %s", got)

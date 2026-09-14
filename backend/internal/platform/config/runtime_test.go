@@ -184,6 +184,11 @@ func TestConfigLogValueOmitsSecrets(t *testing.T) {
 	t.Setenv(envHumanChallengeOperations, "password_login")
 	t.Setenv(envTurnstileSecret, "turnstile-secret-must-not-leak")
 	t.Setenv(envHumanChallengeHostname, "app.example.test")
+	t.Setenv(envNotificationsSMSMode, NotificationChannelExternal)
+	t.Setenv(envSMSProvider, SMSProviderNetgsm)
+	t.Setenv(envNetgsmUsername, "netgsm-user")
+	t.Setenv(envNetgsmPassword, "netgsm-secret-must-not-leak")
+	t.Setenv(envNetgsmMsgHeader, "KONUMLUTEST")
 	cfg, err := Load()
 	if err != nil {
 		t.Fatal(err)
@@ -192,10 +197,10 @@ func TestConfigLogValueOmitsSecrets(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(&b, nil))
 	logger.Info("boot", "config", cfg)
 	out := b.String()
-	if strings.Contains(out, "super-secret-db") || strings.Contains(out, "postgres://") || strings.Contains(out, "object-secret-xyz") || strings.Contains(out, "turnstile-secret-must-not-leak") {
+	if strings.Contains(out, "super-secret-db") || strings.Contains(out, "postgres://") || strings.Contains(out, "object-secret-xyz") || strings.Contains(out, "turnstile-secret-must-not-leak") || strings.Contains(out, "netgsm-secret-must-not-leak") {
 		t.Fatalf("log leaked secrets: %s", out)
 	}
-	if strings.Contains(cfg.String(), "super-secret-db") || strings.Contains(cfg.String(), "object-secret-xyz") || strings.Contains(cfg.String(), "turnstile-secret-must-not-leak") {
+	if strings.Contains(cfg.String(), "super-secret-db") || strings.Contains(cfg.String(), "object-secret-xyz") || strings.Contains(cfg.String(), "turnstile-secret-must-not-leak") || strings.Contains(cfg.String(), "netgsm-secret-must-not-leak") {
 		t.Fatalf("String leaked: %s", cfg.String())
 	}
 }
@@ -346,6 +351,23 @@ func TestHumanChallengeConfigGates(t *testing.T) {
 	}
 	if !strings.Contains(got, "sms_vendor") {
 		t.Fatalf("sms still blocked: %s", got)
+	}
+
+	t.Setenv(envNotificationsSMSMode, NotificationChannelExternal)
+	t.Setenv(envSMSProvider, SMSProviderNetgsm)
+	t.Setenv(envNetgsmUsername, "netgsm-user")
+	t.Setenv(envNetgsmPassword, "netgsm-secret-must-not-leak")
+	t.Setenv(envNetgsmMsgHeader, "KONUMLUTEST")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("production netgsm: %v", err)
+	}
+	got = strings.Join(cfg.AuthProviderLaunchBlockers(), ",")
+	if strings.Contains(got, "sms_vendor") {
+		t.Fatalf("wired netgsm must not list sms_vendor: %s", got)
+	}
+	if strings.Contains(cfg.String(), "netgsm-secret-must-not-leak") {
+		t.Fatal("production config leaked netgsm password")
 	}
 }
 

@@ -47,6 +47,7 @@ var sensitiveKeyExact = map[string]struct{}{
 	"signupproof": {}, "resetproof": {}, "challengetoken": {},
 	"humanchallenge": {}, "humanchallengeresponse": {}, "providersecret": {},
 	"turnstilesecret": {}, "turnstileresponse": {},
+	"netgsmpassword": {}, "netgsmusername": {},
 	"destination": {}, "verificationsecret": {},
 	"pushtoken": {}, "fcmtoken": {}, "apnstoken": {}, "deviceendpoint": {},
 	"consentpayload": {}, "consentevidence": {}, "consentip": {},
@@ -75,6 +76,7 @@ var (
 	emailRE        = regexp.MustCompile(`(?i)\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b`)
 	phoneRE        = regexp.MustCompile(`(?:\+90|0)5\d{9}`)
 	bearerRE       = regexp.MustCompile(`(?i)bearer\s+\S+`)
+	basicRE        = regexp.MustCompile(`(?i)basic\s+\S+`)
 	tcknRE         = regexp.MustCompile(`\b[1-9]\d{10}\b`)
 	secretAssignRE = regexp.MustCompile(`(?i)\b(otp|totp|qr_token|qr_secret|qr|verification_secret|webhook_secret|api_key|staff_dev_token)\s*[:=]\s*\S+`)
 	amzQueryRE     = regexp.MustCompile(`(?i)X-Amz-(Algorithm|Credential|Signature|SignedHeaders|Security-Token|Date|Expires)=[^&\s]+`)
@@ -127,6 +129,7 @@ func RedactText(s string) string {
 		return s
 	}
 	s = bearerRE.ReplaceAllString(s, "Bearer "+Redacted)
+	s = basicRE.ReplaceAllString(s, "Basic "+Redacted)
 	s = amzQueryRE.ReplaceAllString(s, "X-Amz-$1="+Redacted)
 	s = secretAssignRE.ReplaceAllStringFunc(s, func(m string) string {
 		sep := "="

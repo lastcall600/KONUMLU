@@ -13,7 +13,6 @@ const (
 )
 
 // Transports are vendor-specific clients registered at the composition root.
-// No vendor is selected yet; production wiring leaves these nil.
 type Transports struct {
 	Email EmailClient
 	SMS   SMSClient

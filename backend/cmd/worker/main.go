@@ -42,7 +42,7 @@ func run() error {
 	}
 	observability.ConfigureJSON(cfg, nil)
 
-	if _, _, _, err := bindNotificationSenders(cfg); err != nil {
+	if _, _, _, _, err := bindNotificationSenders(cfg); err != nil {
 		return fmt.Errorf("notifications: %w", err)
 	}
 
@@ -64,8 +64,8 @@ func run() error {
 		return fmt.Errorf("outbox: %w", err)
 	}
 
-	// SMS/push vendors are not selected. Missing senders fail retryably;
-	// the worker must never complete an intent as a successful no-op send.
+	// Missing senders fail retryably; the worker must never complete an
+	// intent as a successful no-op send. Netgsm/SES are transport only.
 	slog.Info("outbox worker started")
 	if blockers := cfg.AuthProviderLaunchBlockers(); len(blockers) > 0 {
 		slog.Info("auth_provider_launch_blocked", "blockers", blockers)
@@ -154,7 +154,7 @@ func newRelay(ctx context.Context, cfg config.Config, pool *db.Pool) (*outbox.Re
 	if mediaSvc != nil {
 		go media.RunOrphanSweeper(ctx, mediaSvc, 0)
 	}
-	dispatcher, err := notifications.NewDispatcher(notifyStore, materializer, elig, wiring.Channel, nil, nil, notifications.DispatcherConfig{
+	dispatcher, err := notifications.NewDispatcher(notifyStore, materializer, elig, wiring.ChannelEmail, wiring.ChannelSMS, nil, notifications.DispatcherConfig{
 		BatchSize:      cfg.OutboxBatchSize,
 		ProcessingHold: cfg.OutboxLease,
 		PollInterval:   cfg.OutboxPollInterval,

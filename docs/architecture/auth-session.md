@@ -115,7 +115,7 @@ State-changing events (`auth.login.success`, `auth.logout`, `auth.session.revoke
 ## Remaining work (not claimed done)
 
 - Production human-challenge vendor onboarding (port + fail-closed stub exist)
-- Email/SMS vendor onboarding (channel modes exist; no adapter)
+- Email/SMS vendor onboarding (SES and Netgsm adapters exist; live credentials pending)
 - Email/phone change and authenticated password-change product endpoints (reuse Step-Up)
 - Device binding / privacy-minimized device labels (schema)
 - Periodic session rotation (OI-002-03)
