@@ -2,9 +2,9 @@
 
 Provider-neutral product/privacy foundation for KONUMLU notifications. This document is **not** legal advice and does not encode unreviewed KVKK/İYS conclusions.
 
-**Package status:** NOTIFY-A frozen. NOTIFY-B producers + provider-neutral dispatch foundation: `NOTIFY_B_APPLICATION_READY_FOR_REVIEW`. Transactional email transport: Amazon SES (`PROVIDER-B`). SMS/push vendors remain unselected.
+**Package status:** NOTIFY-A frozen. NOTIFY-B producers + provider-neutral dispatch foundation: `NOTIFY_B_APPLICATION_READY_FOR_REVIEW`. Transactional email transport: Amazon SES (`PROVIDER-B`). Transactional/OTP SMS transport: Netgsm (`PROVIDER-C`). Push vendor remains unselected.
 
-Additive schema `000052_notifications_policy_core` is **unchanged after approval**. Preference/consent/inbox HTTP, PostgreSQL stores, AUTH-C selected-event materialization, and in-app channel planning are implemented. External email/SMS/push providers remain unselected. This is **not** production notification readiness.
+Additive schema `000052_notifications_policy_core` is **unchanged after approval**. Preference/consent/inbox HTTP, PostgreSQL stores, AUTH-C selected-event materialization, and in-app channel planning are implemented. SES and Netgsm adapters exist; push remains unselected. This is **not** production notification readiness.
 
 ---
 
@@ -22,7 +22,7 @@ Additive schema `000052_notifications_policy_core` is **unchanged after approval
 | `notifications.channel_deliveries` (000052) | Per-channel delivery/suppression lifecycle. |
 | `notifications.inbox_items` (000052) | In-app inbox row with `read_at`; composite FK to intent recipient. |
 
-**Still absent:** durable push endpoint tables (deferred; no 000053), production email/SMS/push vendors, historical backfill, consumer UI, moderation warning cutover.
+**Still absent:** durable push endpoint tables (deferred; no 000053), historical backfill, consumer UI, moderation warning cutover. SES and Netgsm adapters exist; production credentials remain operator-owned.
 
 ### Code
 
@@ -32,6 +32,7 @@ Additive schema `000052_notifications_policy_core` is **unchanged after approval
 - `internal/identity/contracts.NotificationEligibilityReader` — verified email/phone **booleans**. `NotificationContactResolver` returns a verified destination **in memory only** for the dispatcher (not HTTP, not stored, redacted in fmt).
 - `internal/infrastructure/notifications` — verification email/SMS bind (`disabled` / `external`).
 - `internal/infrastructure/email/ses` — Amazon SES API v2 `SendEmail` transport (AWS SDK v2). Not notification policy.
+- `internal/infrastructure/sms/netgsm` — Netgsm REST v2 `/send` (dispatcher SMS) and `/otp` (Identity verification). Not notification policy. No marketing/`iysfilter`.
 - Identity signup/reset enqueue `notifications.intent` in the same PostgreSQL transaction as the challenge. **OTP stays on this legacy path.**
 - Moderation warning remains legacy `notifications.moderation.warning` v1 (not cut over; avoids double-notify).
 - AUTH-C still emits `identity.auth.security` v1. Worker runs Identity audit logging then Notifications materialization as a **single sequential handler**.
@@ -401,19 +402,18 @@ HTTP APIs, PostgreSQL stores, AUTH-C selected consumption, and in-app planning a
 
 ---
 
-## 24. Provider blockers (unchanged)
+## 24. Provider blockers
 
-HumanChallenge production widget credentials. SMS vendor. Push vendor. Amazon SES is the frozen transactional email provider; production sending still requires verified identity, region sandbox exit, and runtime credentials. Do not claim mailbox delivery from SendEmail accept.
+HumanChallenge production widget credentials. Push vendor. Amazon SES is the frozen transactional email provider; production sending still requires verified identity, region sandbox exit, and runtime credentials. Do not claim mailbox delivery from SendEmail accept. Netgsm is the frozen Türkiye SMS provider; production sending still requires API credentials, approved `msgheader`, credit, and the OTP package for Identity OTP. Do not claim handset delivery from send/otp accept. Do not invent İYS policy in the provider package.
 
 ---
 
-## 25. Remaining after NOTIFY-B
+## 25. Remaining after NOTIFY-B / PROVIDER-C
 
-1. SMS/push **vendor** selection and production adapters (launch blockers); SES email adapter exists (PROVIDER-B)
-2. Push endpoint schema (000053+) after encryption/ownership review
-3. Optional cutover of `notifications.moderation.warning` onto `notifications.intents`
+1. Push **vendor** selection and production adapter (launch blocker); SES email and Netgsm SMS adapters exist
 2. Push endpoint schema (000053+) after encryption/ownership review
 3. Optional cutover of `notifications.moderation.warning` onto `notifications.intents`
 4. Saved-search match producer (needs an upstream match event)
 5. Optional İYS port **after** legal review
 6. Consumer inbox/preferences UI
+7. Operator Netgsm live send (`LIVE_NETGSM_TEST_PENDING`) and SES live send (`LIVE_SES_TEST_PENDING`)

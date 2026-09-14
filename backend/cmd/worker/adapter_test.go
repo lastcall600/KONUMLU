@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"backend/internal/identity"
 	notifyinfra "backend/internal/infrastructure/notifications"
@@ -86,7 +87,7 @@ func TestNewHandlerRegistryDoesNotRegisterFakeProvider(t *testing.T) {
 		t.Fatal(err)
 	}
 	wiring := mustDisabledWiring(t, resolver)
-	if wiring.Email != nil || wiring.SMS != nil || wiring.Channel != nil {
+	if wiring.Email != nil || wiring.SMS != nil || wiring.ChannelEmail != nil || wiring.ChannelSMS != nil {
 		t.Fatal("cmd/worker production wiring must not include a fake email/SMS provider")
 	}
 	if _, ok := wiring.Resolver.(*identityMaterialResolver); !ok {
@@ -128,6 +129,33 @@ func TestExternalModeWithoutAdapterFailsWiring(t *testing.T) {
 	}, resolver)
 	if !errors.Is(err, notifyinfra.ErrSMSAdapterRequired) {
 		t.Fatalf("sms external err = %v", err)
+	}
+}
+
+func TestExternalSMSWiresNetgsmWithoutCallingProvider(t *testing.T) {
+	resolver, err := newIdentityMaterialResolver(&stubIdentitySource{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wiring, err := productionNotificationsWiring(config.Config{
+		NotificationsEmailMode: config.NotificationChannelDisabled,
+		NotificationsSMSMode:   config.NotificationChannelExternal,
+		SMS: config.SMS{
+			Provider:  config.SMSProviderNetgsm,
+			Username:  "netgsm-user",
+			Password:  "netgsm-secret-password",
+			MsgHeader: "KONUMLUTEST",
+			Timeout:   time.Second,
+		},
+	}, resolver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wiring.SMS == nil || wiring.ChannelSMS == nil {
+		t.Fatal("external SMS must wire Identity OTP and dispatcher ChannelSender")
+	}
+	if wiring.Email != nil || wiring.ChannelEmail != nil {
+		t.Fatal("SMS wiring must not invent an email sender")
 	}
 }
 

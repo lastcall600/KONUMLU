@@ -7,6 +7,7 @@ import (
 	"backend/internal/identity"
 	emailses "backend/internal/infrastructure/email/ses"
 	notifyinfra "backend/internal/infrastructure/notifications"
+	netsms "backend/internal/infrastructure/sms/netgsm"
 	objstorage "backend/internal/infrastructure/storage"
 	"backend/internal/listings"
 	"backend/internal/location"
@@ -26,60 +27,92 @@ import (
 // An intent for an absent channel fails retryably; this process must never
 // pretend a message was sent.
 type notificationsWiring struct {
-	Resolver notifications.VerificationMaterialResolver
-	Email    notifications.EmailSender
-	SMS      notifications.SMSSender
-	Channel  notifications.ChannelSender
+	Resolver     notifications.VerificationMaterialResolver
+	Email        notifications.EmailSender
+	SMS          notifications.SMSSender
+	ChannelEmail notifications.ChannelSender
+	ChannelSMS   notifications.ChannelSender
 }
 
-func productionNotificationTransports(cfg config.Config) (notifyinfra.Transports, notifications.ChannelSender, error) {
-	if cfg.NotificationsEmailMode != config.NotificationChannelExternal {
-		return notifyinfra.Transports{}, nil, nil
+func productionNotificationTransports(cfg config.Config) (notifyinfra.Transports, notifications.ChannelSender, notifications.ChannelSender, error) {
+	var tr notifyinfra.Transports
+	var emailCh, smsCh notifications.ChannelSender
+
+	if cfg.NotificationsEmailMode == config.NotificationChannelExternal {
+		if !cfg.Email.SESWired() {
+			return notifyinfra.Transports{}, nil, nil, notifyinfra.ErrEmailAdapterRequired
+		}
+		ses, err := emailses.New(context.Background(), emailses.Config{
+			Region:  cfg.Email.Region,
+			From:    cfg.Email.From,
+			Timeout: cfg.Email.Timeout,
+		})
+		if err != nil {
+			return notifyinfra.Transports{}, nil, nil, err
+		}
+		client, err := emailses.NewVerificationClient(ses)
+		if err != nil {
+			return notifyinfra.Transports{}, nil, nil, err
+		}
+		channel, err := emailses.NewChannelClient(ses)
+		if err != nil {
+			return notifyinfra.Transports{}, nil, nil, err
+		}
+		tr.Email = client
+		emailCh = channel
 	}
-	if !cfg.Email.SESWired() {
-		return notifyinfra.Transports{}, nil, notifyinfra.ErrEmailAdapterRequired
+
+	if cfg.NotificationsSMSMode == config.NotificationChannelExternal {
+		if !cfg.SMS.NetgsmWired() {
+			return notifyinfra.Transports{}, nil, nil, notifyinfra.ErrSMSAdapterRequired
+		}
+		ng, err := netsms.New(netsms.Config{
+			Username:  cfg.SMS.Username,
+			Password:  cfg.SMS.Password,
+			MsgHeader: cfg.SMS.MsgHeader,
+			Timeout:   cfg.SMS.Timeout,
+		})
+		if err != nil {
+			return notifyinfra.Transports{}, nil, nil, err
+		}
+		otp, err := netsms.NewOTPClient(ng)
+		if err != nil {
+			return notifyinfra.Transports{}, nil, nil, err
+		}
+		channel, err := netsms.NewChannelClient(ng)
+		if err != nil {
+			return notifyinfra.Transports{}, nil, nil, err
+		}
+		tr.SMS = otp
+		smsCh = channel
 	}
-	tr, err := emailses.New(context.Background(), emailses.Config{
-		Region:  cfg.Email.Region,
-		From:    cfg.Email.From,
-		Timeout: cfg.Email.Timeout,
-	})
-	if err != nil {
-		return notifyinfra.Transports{}, nil, err
-	}
-	client, err := emailses.NewVerificationClient(tr)
-	if err != nil {
-		return notifyinfra.Transports{}, nil, err
-	}
-	channel, err := emailses.NewChannelClient(tr)
-	if err != nil {
-		return notifyinfra.Transports{}, nil, err
-	}
-	return notifyinfra.Transports{Email: client}, channel, nil
+
+	return tr, emailCh, smsCh, nil
 }
 
-func bindNotificationSenders(cfg config.Config) (notifications.EmailSender, notifications.SMSSender, notifications.ChannelSender, error) {
-	transports, channel, err := productionNotificationTransports(cfg)
+func bindNotificationSenders(cfg config.Config) (notifications.EmailSender, notifications.SMSSender, notifications.ChannelSender, notifications.ChannelSender, error) {
+	transports, emailCh, smsCh, err := productionNotificationTransports(cfg)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	senders, err := notifyinfra.Bind(cfg.NotificationsEmailMode, cfg.NotificationsSMSMode, transports)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
-	return senders.Email, senders.SMS, channel, nil
+	return senders.Email, senders.SMS, emailCh, smsCh, nil
 }
 
 func productionNotificationsWiring(cfg config.Config, resolver notifications.VerificationMaterialResolver) (notificationsWiring, error) {
-	email, sms, channel, err := bindNotificationSenders(cfg)
+	email, sms, emailCh, smsCh, err := bindNotificationSenders(cfg)
 	if err != nil {
 		return notificationsWiring{}, err
 	}
 	return notificationsWiring{
-		Resolver: resolver,
-		Email:    email,
-		SMS:      sms,
-		Channel:  channel,
+		Resolver:     resolver,
+		Email:        email,
+		SMS:          sms,
+		ChannelEmail: emailCh,
+		ChannelSMS:   smsCh,
 	}, nil
 }
 

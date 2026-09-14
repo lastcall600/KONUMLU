@@ -2,7 +2,7 @@
 
 Identity-owned substrate for consumer authentication abuse protection. This is **not** a fraud engine, **not** Trust / Güven Pasaportu, and **not** complete 0C-AUTH.
 
-AUTH-B session lifecycle/step-up is documented in `auth-session.md`. AUTH-C is implemented locally (`docs/operations/AUTH-SECURITY.md`). HumanChallenge production provider is Cloudflare Turnstile; production widget credentials, frontend widget, and email/SMS vendors remain launch blockers. Completing AUTH-A does not make consumer auth production-complete.
+AUTH-B session lifecycle/step-up is documented in `auth-session.md`. AUTH-C is implemented locally (`docs/operations/AUTH-SECURITY.md`). HumanChallenge production provider is Cloudflare Turnstile; production widget credentials, frontend widget, and live SES/Netgsm credentials remain launch blockers. Completing AUTH-A does not make consumer auth production-complete.
 
 ## Rate-limit dimensions
 
@@ -136,5 +136,5 @@ Production Cloudflare secrets must not be committed. Official dummy test credent
 
 AUTH-B is implemented locally (`docs/architecture/auth-session.md`): session rotation, idle Touch, security-center HTTP, passkey list/remove, Valkey Step-Up. HumanChallenge is not Step-Up. Device binding is not AUTH-C.
 
-AUTH-C (this package): durable `identity.auth.security` v1 outbox events (safe metadata only; unknown-account login failures omit user id and identifiers). HumanChallenge production provider is Cloudflare Turnstile (`fake` rejected in staging/production; production credentials not in git). Email/SMS vendors are **not** selected (`disabled` default; `external` requires an adapter at worker start; Identity never claims "sent"). Classification: **HUMAN_CHALLENGE_ADAPTER_READY_CREDENTIALS_PENDING**. Operator runbook: `docs/operations/AUTH-SECURITY.md`.
+AUTH-C (this package): durable `identity.auth.security` v1 outbox events (safe metadata only; unknown-account login failures omit user id and identifiers). HumanChallenge production provider is Cloudflare Turnstile (`fake` rejected in staging/production; production credentials not in git). Email provider is Amazon SES; SMS provider is Netgsm (`disabled` default; `external` requires the adapter at worker start; Identity never claims "sent"). Classification: **HUMAN_CHALLENGE_ADAPTER_READY_CREDENTIALS_PENDING**. Operator runbook: `docs/operations/AUTH-SECURITY.md`.
 

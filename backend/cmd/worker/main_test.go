@@ -262,6 +262,22 @@ func TestRunRequiresMaterialKeyConfig(t *testing.T) {
 	}
 }
 
+func TestRunFailsWhenExternalSMSMissingNetgsmConfig(t *testing.T) {
+	setWorkerRequiredEnv(t)
+	t.Setenv("NOTIFICATIONS_EMAIL_MODE", "disabled")
+	t.Setenv("NOTIFICATIONS_SMS_MODE", "external")
+	err := run()
+	if err == nil {
+		t.Fatal("expected startup error")
+	}
+	if !strings.Contains(err.Error(), "SMS_PROVIDER") && !strings.Contains(err.Error(), "NETGSM") {
+		t.Fatalf("err = %v", err)
+	}
+	if strings.Contains(strings.ToLower(err.Error()), "netgsm-secret") {
+		t.Fatalf("error leaked secrets: %v", err)
+	}
+}
+
 func TestRunFailsWhenExternalEmailMissingSESConfig(t *testing.T) {
 	setWorkerRequiredEnv(t)
 	t.Setenv("NOTIFICATIONS_EMAIL_MODE", "external")

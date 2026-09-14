@@ -46,7 +46,7 @@ func (c Config) AuthProviderLaunchBlockers() []string {
 	if c.NotificationsEmailMode != NotificationChannelExternal || !c.Email.SESWired() {
 		out = append(out, "email_vendor")
 	}
-	if c.NotificationsSMSMode != NotificationChannelExternal {
+	if c.NotificationsSMSMode != NotificationChannelExternal || !c.SMS.NetgsmWired() {
 		out = append(out, "sms_vendor")
 	}
 	return out

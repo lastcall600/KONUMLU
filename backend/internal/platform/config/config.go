@@ -79,6 +79,12 @@ const (
 	envEmailSESFrom                 = "EMAIL_SES_FROM"
 	envEmailSESTimeout              = "EMAIL_SES_TIMEOUT"
 	defaultEmailSESTimeout          = 5 * time.Second
+	envSMSProvider                  = "SMS_PROVIDER"
+	envNetgsmUsername               = "NETGSM_USERNAME"
+	envNetgsmPassword               = "NETGSM_PASSWORD"
+	envNetgsmMsgHeader              = "NETGSM_MSGHEADER"
+	envNetgsmTimeout                = "NETGSM_TIMEOUT"
+	defaultNetgsmTimeout            = 5 * time.Second
 	envMediaMalwareScanRequired     = "MEDIA_MALWARE_SCAN_REQUIRED"
 	envMediaImageModerationRequired = "MEDIA_IMAGE_MODERATION_REQUIRED"
 	envStaffIDPIssuer               = "STAFF_IDP_ISSUER"
@@ -93,6 +99,7 @@ const (
 	NotificationChannelDisabled = "disabled"
 	NotificationChannelExternal = "external"
 	EmailProviderSES            = "ses"
+	SMSProviderNetgsm           = "netgsm"
 )
 
 // Config holds process configuration loaded from the environment.
@@ -155,6 +162,9 @@ type Config struct {
 	// Email is transactional Amazon SES settings. Secrets are not stored here;
 	// the AWS default credential chain is used at adapter construction.
 	Email Email
+	// SMS is transactional/OTP Netgsm settings. Password is server-only and
+	// must never appear in String, GoString, slog, or error text.
+	SMS SMS
 	// Media scanner/moderation requirements. Vendors are not selected; required+missing is retryable.
 	MediaMalwareScanRequired     bool
 	MediaImageModerationRequired bool
@@ -184,6 +194,26 @@ func (e Email) GoString() string { return e.String() }
 
 func (e Email) SESWired() bool {
 	return e.Provider == EmailProviderSES && e.Region != "" && e.From != "" && e.Timeout > 0
+}
+
+// SMS is the transactional/OTP SMS provider selection. Password is never logged.
+type SMS struct {
+	Provider  string
+	Username  string
+	Password  string
+	MsgHeader string
+	Timeout   time.Duration
+}
+
+func (s SMS) String() string {
+	return fmt.Sprintf("config.SMS{provider:%s username_configured:%t password_configured:%t msgheader_configured:%t}",
+		s.Provider, s.Username != "", s.Password != "", s.MsgHeader != "")
+}
+
+func (s SMS) GoString() string { return s.String() }
+
+func (s SMS) NetgsmWired() bool {
+	return s.Provider == SMSProviderNetgsm && s.Username != "" && s.Password != "" && s.MsgHeader != "" && s.Timeout > 0
 }
 
 // StaffIDP holds issuer/audience/JWKS for a future staff identity adapter.
@@ -506,6 +536,11 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	cfg.Email = email
+	sms, err := parseSMS(smsMode)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.SMS = sms
 
 	malwareReq, err := parseOptionalBool(envMediaMalwareScanRequired)
 	if err != nil {
@@ -693,6 +728,55 @@ func parseEmail(emailMode string) (Email, error) {
 	}
 	if strings.ContainsAny(out.From, "\r\n") || !strings.Contains(out.From, "@") {
 		return Email{}, fmt.Errorf("%s is malformed", envEmailSESFrom)
+	}
+	return out, nil
+}
+
+func parseSMS(smsMode string) (SMS, error) {
+	provider := strings.ToLower(strings.TrimSpace(os.Getenv(envSMSProvider)))
+	if provider == "" && smsMode != NotificationChannelExternal {
+		return SMS{}, nil
+	}
+	if provider == "" {
+		return SMS{}, fmt.Errorf("%s must be %s when %s=%s", envSMSProvider, SMSProviderNetgsm, envNotificationsSMSMode, NotificationChannelExternal)
+	}
+	if provider != SMSProviderNetgsm {
+		return SMS{}, fmt.Errorf("%s must be %s", envSMSProvider, SMSProviderNetgsm)
+	}
+	out := SMS{
+		Provider:  SMSProviderNetgsm,
+		Username:  strings.TrimSpace(os.Getenv(envNetgsmUsername)),
+		Password:  strings.TrimSpace(os.Getenv(envNetgsmPassword)),
+		MsgHeader: strings.TrimSpace(os.Getenv(envNetgsmMsgHeader)),
+		Timeout:   defaultNetgsmTimeout,
+	}
+	if raw := strings.TrimSpace(os.Getenv(envNetgsmTimeout)); raw != "" {
+		d, err := parsePositiveDuration(envNetgsmTimeout, raw)
+		if err != nil {
+			return SMS{}, err
+		}
+		out.Timeout = d
+	}
+	if out.Timeout > 30*time.Second {
+		return SMS{}, fmt.Errorf("%s must be 30s or less", envNetgsmTimeout)
+	}
+	if out.Username == "" {
+		return SMS{}, fmt.Errorf("%s must not be empty when %s=%s", envNetgsmUsername, envSMSProvider, SMSProviderNetgsm)
+	}
+	if strings.ContainsAny(out.Username, " \t\r\n") {
+		return SMS{}, fmt.Errorf("%s is malformed", envNetgsmUsername)
+	}
+	if out.Password == "" {
+		return SMS{}, fmt.Errorf("%s must not be empty when %s=%s", envNetgsmPassword, envSMSProvider, SMSProviderNetgsm)
+	}
+	if strings.ContainsAny(out.Password, "\r\n") {
+		return SMS{}, fmt.Errorf("%s is malformed", envNetgsmPassword)
+	}
+	if out.MsgHeader == "" {
+		return SMS{}, fmt.Errorf("%s must not be empty when %s=%s", envNetgsmMsgHeader, envSMSProvider, SMSProviderNetgsm)
+	}
+	if strings.ContainsAny(out.MsgHeader, "\r\n") {
+		return SMS{}, fmt.Errorf("%s is malformed", envNetgsmMsgHeader)
 	}
 	return out, nil
 }
