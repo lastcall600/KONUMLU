@@ -99,6 +99,9 @@ export default function HomePage() {
             <Link href="/guven-pasaportum">Güven Pasaportum</Link>
           </p>
           <p>
+            <Link href="/bildirimler">Bildirimler</Link>
+          </p>
+          <p>
             <Link href="/ilan-ver">İlan ver</Link>
           </p>
           <button type="button" onClick={() => void onLogout()} disabled={busy}>

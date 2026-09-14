@@ -23,7 +23,7 @@ Additive schema `000052_notifications_policy_core` is **unchanged after approval
 | `notifications.inbox_items` (000052) | In-app inbox row with `read_at`; composite FK to intent recipient. |
 | `notifications.push_endpoints` (000053) | User-owned web/Android/iOS endpoints. Encrypted provider material. Soft-revoke via `revoked_at`. |
 
-**Still absent:** historical backfill, consumer inbox/preferences UI, Web Push frontend registration (`WEB_PUSH_FRONTEND_PENDING`), mobile push client (`MOBILE_PUSH_CLIENT_PENDING`), moderation warning cutover. SES, Netgsm, and push transports exist; production credentials remain operator-owned.
+**Still absent:** historical backfill, consumer inbox UI, mobile push client (`MOBILE_PUSH_CLIENT_PENDING`), moderation warning cutover. SES, Netgsm, and push transports exist; production credentials remain operator-owned. Consumer Web Push registration UI / service worker is implemented (`web/apps/consumer/docs/web-push.md`).
 
 ### Code
 
@@ -433,16 +433,15 @@ HTTP APIs, PostgreSQL stores, AUTH-C selected consumption, and in-app planning a
 
 ## 24. Provider blockers
 
-HumanChallenge production widget credentials. Amazon SES is the frozen transactional email provider; production sending still requires verified identity, region sandbox exit, and runtime credentials. Do not claim mailbox delivery from SendEmail accept. Netgsm is the frozen Türkiye SMS provider; production sending still requires API credentials, approved `msgheader`, credit, and the OTP package for Identity OTP. Do not claim handset delivery from send/otp accept. Do not invent İYS policy in the provider package. Push transports are implemented; live Web Push/FCM/APNs credentials are operator-owned (`LIVE_*_TEST_PENDING`). Frontend/mobile registration clients remain pending.
+HumanChallenge production widget credentials. Amazon SES is the frozen transactional email provider; production sending still requires verified identity, region sandbox exit, and runtime credentials. Do not claim mailbox delivery from SendEmail accept. Netgsm is the frozen Türkiye SMS provider; production sending still requires API credentials, approved `msgheader`, credit, and the OTP package for Identity OTP. Do not claim handset delivery from send/otp accept. Do not invent İYS policy in the provider package. Push transports are implemented; live Web Push/FCM/APNs credentials are operator-owned (`LIVE_*_TEST_PENDING`). Consumer Web Push registration exists. Mobile registration clients remain pending.
 
 ---
 
 ## 25. Remaining after NOTIFY-B / PROVIDER-C
 
-1. Consumer Web Push registration UI / service worker (`WEB_PUSH_FRONTEND_PENDING`)
-2. React Native FCM/APNs registration (`MOBILE_PUSH_CLIENT_PENDING`)
-3. Optional cutover of `notifications.moderation.warning` onto `notifications.intents`
-4. Saved-search match producer (needs an upstream match event)
-5. Optional İYS port **after** legal review
-6. Consumer inbox/preferences UI
-7. Operator live sends: `LIVE_WEBPUSH_TEST_PENDING`, `LIVE_FCM_TEST_PENDING`, `LIVE_APNS_TEST_PENDING`, `LIVE_NETGSM_TEST_PENDING`, `LIVE_SES_TEST_PENDING`
+1. React Native FCM/APNs registration (`MOBILE_PUSH_CLIENT_PENDING`)
+2. Optional cutover of `notifications.moderation.warning` onto `notifications.intents`
+3. Saved-search match producer (needs an upstream match event)
+4. Optional İYS port **after** legal review
+5. Consumer inbox UI (category web_push preferences exist on `/bildirimler`)
+6. Operator live sends: `LIVE_WEBPUSH_TEST_PENDING`, `LIVE_FCM_TEST_PENDING`, `LIVE_APNS_TEST_PENDING`, `LIVE_NETGSM_TEST_PENDING`, `LIVE_SES_TEST_PENDING`

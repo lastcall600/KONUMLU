@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 
+import { WebPushLifecycle } from "@/components/WebPushLifecycle";
 import { DEFAULT_LOCALE, dirForLocale } from "@/lib/locale";
 
 import "./globals.css";
@@ -15,7 +16,10 @@ export default function RootLayout({ children }: { children: ReactNode }) {
 
   return (
     <html lang={locale} dir={dirForLocale(locale)}>
-      <body>{children}</body>
+      <body>
+        <WebPushLifecycle />
+        {children}
+      </body>
     </html>
   );
 }
