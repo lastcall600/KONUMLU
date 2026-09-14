@@ -171,6 +171,8 @@
 
 **Group 5 — Architecture gate review (0A-32):** ✅ PASS — V1 blocking gates none; G-06 deferred V1.5 / non-blocking
 
+**Product / UI handoff (documentation):** ✅ [docs/product/PRODUCT-UI-HANDOFF.md](./docs/product/PRODUCT-UI-HANDOFF.md) is the authoritative Product → Figma → Frontend contract (screen inventory, state matrices, component inventory). It does not open new architecture foundations or provider integrations.
+
 ---
 
 ## What Is Deferred
@@ -264,6 +266,12 @@ See [docs/MASTER-SPEC.md](./docs/MASTER-SPEC.md#open-architecture-gates) and [DE
 See [docs/MASTER-SPEC.md](./docs/MASTER-SPEC.md#detected-conflicts-and-ambiguities) for the full list.
 
 All conflicts from the initial reconciliation review have been resolved or correctly classified.
+
+---
+
+## Product / UI (Figma)
+
+Authoritative UI/product handoff: [docs/product/PRODUCT-UI-HANDOFF.md](./docs/product/PRODUCT-UI-HANDOFF.md). Supporting inventories: [docs/product/SCREEN-INVENTORY.md](./docs/product/SCREEN-INVENTORY.md), [docs/product/STATE-MATRICES.md](./docs/product/STATE-MATRICES.md), [docs/product/COMPONENT-INVENTORY.md](./docs/product/COMPONENT-INVENTORY.md). Repository/domain truth overrides prior visual mockups. Figma may start without live EİDS/PSP/courier/Turnstile production credentials.
 
 ---
 
