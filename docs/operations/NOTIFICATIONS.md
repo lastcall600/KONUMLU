@@ -1,6 +1,6 @@
-# Notification operations (NOTIFY-A / NOTIFY-B / NOTIFY-C)
+# Notification operations (NOTIFY-A / NOTIFY-B / NOTIFY-C / NOTIFY-D)
 
-This is not legal advice. Transactional email uses Amazon SES when `NOTIFICATIONS_EMAIL_MODE=external` and `EMAIL_PROVIDER=ses`. Transactional SMS and Identity OTP SMS use Netgsm when `NOTIFICATIONS_SMS_MODE=external` and `SMS_PROVIDER=netgsm`. Push **transport** vendors are **not selected**. Durable push **endpoint registration** exists (`000053`). Do not treat push dispatch as production-ready. Netgsm live credentials are not committed (`LIVE_NETGSM_TEST_PENDING`).
+This is not legal advice. Transactional email uses Amazon SES when `NOTIFICATIONS_EMAIL_MODE=external` and `EMAIL_PROVIDER=ses`. Transactional SMS and Identity OTP SMS use Netgsm when `NOTIFICATIONS_SMS_MODE=external` and `SMS_PROVIDER=netgsm`. Push transports are optional per environment: Web Push (VAPID), FCM HTTP v1, and/or APNs token auth. Durable push **endpoint registration** exists (`000053`). Accept ≠ displayed. Live provider credentials are not committed (`LIVE_WEBPUSH_TEST_PENDING`, `LIVE_FCM_TEST_PENDING`, `LIVE_APNS_TEST_PENDING`, `LIVE_NETGSM_TEST_PENDING`).
 
 ## Processes
 
@@ -69,13 +69,30 @@ HMAC uniqueness is `v1|channel|platform|provider|canonical_endpoint_identity` (w
 
 Logout / session revoke does **not** revoke endpoints (V1; no session↔device binding).
 
-No FCM/APNs/WebPush HTTP in this package. Active endpoints make the channel **pending**, never fake `accepted`. Cross-user active hash is rejected (`conflict`). Same-user re-register (including web p256dh/auth refresh) is idempotent on the same row.
+Worker decrypts material JIT per send and never persists plaintext. Dispatcher is the only retry authority. Adapters perform one HTTP call.
 
-Never log tokens, Web Push URLs, p256dh, auth, ciphertext, or keys.
+### Web Push (VAPID)
+
+Enable by setting all of `WEBPUSH_VAPID_PUBLIC_KEY`, `WEBPUSH_VAPID_PRIVATE_KEY`, `WEBPUSH_VAPID_SUBJECT` (`mailto:` or `https:`). Optional `WEBPUSH_TIMEOUT` (default 5s, max 30s). Library: `github.com/SherClockHolmes/webpush-go`. 201/200 = accepted. 404/410 = revoke endpoint. 429/5xx/timeout = retryable. Do not log private key, endpoint URL, p256dh, or auth.
+
+### FCM HTTP v1
+
+Enable with `FCM_PROJECT_ID`. Optional `FCM_CREDENTIALS_FILE` (service-account JSON path; never committed). Otherwise Google application default / workload identity. Optional `FCM_TIMEOUT`. POST `https://fcm.googleapis.com/v1/projects/{id}/messages:send` with OAuth2 Bearer. Access tokens and device tokens are never logged. `UNREGISTERED` and token-authoritative `INVALID_ARGUMENT` revoke the endpoint. 429/5xx/UNAVAILABLE/QUOTA_EXCEEDED = retryable. Auth/config failures are permanent.
+
+### APNs token authentication
+
+Enable with `APNS_TEAM_ID`, `APNS_KEY_ID`, `APNS_TOPIC`, `APNS_ENVIRONMENT` (`sandbox` or `production`; never inferred from the device token), and `APNS_PRIVATE_KEY` or `APNS_PRIVATE_KEY_FILE` (.p8). Optional `APNS_TIMEOUT`. ES256 JWT is cached ~50 minutes. HTTP/2 POST `/3/device/{token}` with server-owned `apns-topic`. 200 = accepted. `BadDeviceToken` / `Unregistered` / `DeviceTokenNotForTopic` / HTTP 410 revoke. 429/5xx/Shutdown = retryable. Do not log device token, signing key, JWT, or Authorization.
+
+### Fanout
+
+One `channel_deliveries` row per channel. Independent endpoint attempts. Channel accepted if any configured endpoint is accepted. Invalid endpoints revoked. Retryable failures are not hidden when nothing succeeded. No per-endpoint delivery migration.
+
+Never log tokens, Web Push URLs, p256dh, auth, ciphertext, keys, or provider JWTs.
+
+Frontend: `WEB_PUSH_FRONTEND_PENDING` (no consumer service worker in this package). Mobile: `MOBILE_PUSH_CLIENT_PENDING`.
 
 ## What not to do
 
-- Do not add Firebase/APNs/WebPush SDKs without an approved dependency and vendor decision
 - Do not expose `POST /send-notification`
 - Do not cut over moderation warnings without a double-notify review
 - Do not invent İYS consent inside the Netgsm adapter

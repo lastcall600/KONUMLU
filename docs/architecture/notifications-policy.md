@@ -2,7 +2,7 @@
 
 Provider-neutral product/privacy foundation for KONUMLU notifications. This document is **not** legal advice and does not encode unreviewed KVKK/İYS conclusions.
 
-**Package status:** NOTIFY-A frozen. NOTIFY-B producers + provider-neutral dispatch foundation: `NOTIFY_B_APPLICATION_READY_FOR_REVIEW`. NOTIFY-C push endpoint registry: `NOTIFY_C_APPLICATION_READY_FOR_REVIEW` (`000053`; encrypted storage; no vendor HTTP). Transactional email transport: Amazon SES (`PROVIDER-B`). Transactional/OTP SMS transport: Netgsm (`PROVIDER-C`). Push **transport** vendors remain unselected.
+**Package status:** NOTIFY-A frozen. NOTIFY-B producers + provider-neutral dispatch foundation: `NOTIFY_B_APPLICATION_READY_FOR_REVIEW`. NOTIFY-C push endpoint registry: `NOTIFY_C_APPLICATION_READY_FOR_REVIEW` (`000053`; encrypted storage). NOTIFY-D production push transports: Web Push (VAPID), FCM HTTP v1, APNs token HTTP/2. Transactional email transport: Amazon SES (`PROVIDER-B`). Transactional/OTP SMS transport: Netgsm (`PROVIDER-C`).
 
 Additive schema `000052_notifications_policy_core` is **unchanged after approval**. Preference/consent/inbox HTTP, PostgreSQL stores, AUTH-C selected-event materialization, and in-app channel planning are implemented. SES and Netgsm adapters exist; push remains unselected. This is **not** production notification readiness.
 
@@ -23,7 +23,7 @@ Additive schema `000052_notifications_policy_core` is **unchanged after approval
 | `notifications.inbox_items` (000052) | In-app inbox row with `read_at`; composite FK to intent recipient. |
 | `notifications.push_endpoints` (000053) | User-owned web/Android/iOS endpoints. Encrypted provider material. Soft-revoke via `revoked_at`. |
 
-**Still absent:** FCM/APNs/WebPush HTTP adapters, historical backfill, consumer UI, moderation warning cutover. SES and Netgsm adapters exist; production credentials remain operator-owned.
+**Still absent:** historical backfill, consumer inbox/preferences UI, Web Push frontend registration (`WEB_PUSH_FRONTEND_PENDING`), mobile push client (`MOBILE_PUSH_CLIENT_PENDING`), moderation warning cutover. SES, Netgsm, and push transports exist; production credentials remain operator-owned.
 
 ### Code
 
@@ -39,7 +39,7 @@ Additive schema `000052_notifications_policy_core` is **unchanged after approval
 - AUTH-C still emits `identity.auth.security` v1. Worker runs Identity audit logging then Notifications materialization as a **single sequential handler**.
 - `cmd/worker` also registers marketplace domain events and a sibling dispatcher poll loop (does not starve outbox `RunWorkers`).
 - Consumer web has **no** notification inbox/preferences UI.
-- No FCM/APNs/WebPush HTTP transport. Endpoint existence ≠ accepted delivery.
+- `internal/infrastructure/push` — Web Push / FCM HTTP v1 / APNs HTTP/2 adapters. Endpoint existence ≠ accepted delivery. Accept ≠ displayed.
 
 ### Outbox types related to notification
 
@@ -275,7 +275,18 @@ Consent-required and optional channels are **re-checked at dispatch** (withdrawn
 
 **Logout:** Identity session revoke/logout does **not** revoke push endpoints. One physical browser/app endpoint can outlive session rotation. Explicit `DELETE /v1/push-endpoints/{id}` is the V1 revoke path. Future device/session binding may supersede this.
 
-**Dispatch:** no active endpoint → suppress `channel_unavailable`. Active endpoint → `pending`. Worker `PushSender` remains nil until a transport adapter is approved. Endpoint registration must not mark push `accepted`.
+**Dispatch:** no active endpoint → suppress `channel_unavailable`. Active endpoint → `pending`. Worker decrypts provider material JIT per endpoint, selects Web Push / FCM / APNs from stored `(channel, platform, provider)`, and never fake-accepts an unconfigured provider. Endpoint registration must not mark push `accepted`.
+
+**Fanout (V1, no per-endpoint delivery rows):** every active endpoint on that channel is attempted once. Channel `accepted` if **at least one** configured endpoint is provider-accepted. Authoritative invalid endpoints are revoked. If nothing was accepted, retryable failures stay `retryable_failed` (dispatcher backoff). Mixed accept + retryable is `accepted` and is **not** retried (some devices may miss this intent). Full-channel retry is at-least-once and may duplicate. No `000054` per-endpoint rows.
+
+**Invalid endpoint mapping (revoke only these):**
+- Web Push: HTTP 404 / 410
+- FCM: `UNREGISTERED`; `INVALID_ARGUMENT` when the body is authoritatively about the registration token
+- APNs: `BadDeviceToken`, `Unregistered`, `DeviceTokenNotForTopic` (including HTTP 410)
+
+Generic timeouts, 429, 5xx, and network errors do **not** revoke. Adapters do not retry. Dispatcher owns backoff. `Retry-After` is not persisted (existing bounded backoff only).
+
+**Accepted semantics:** provider queued/accepted the push. Not displayed, not read, not delivered to the user. No `delivered` state.
 
 **Payload privacy:** lock-screen / third-party-visible. Transport payload (future) may carry category, opaque reference id, template key, and generic title/body. Forbidden: message body, dispute evidence, contact info, address, payment data, TCKN, OTP, auth/reset tokens, raw listing private data.
 
@@ -422,16 +433,16 @@ HTTP APIs, PostgreSQL stores, AUTH-C selected consumption, and in-app planning a
 
 ## 24. Provider blockers
 
-HumanChallenge production widget credentials. Push vendor. Amazon SES is the frozen transactional email provider; production sending still requires verified identity, region sandbox exit, and runtime credentials. Do not claim mailbox delivery from SendEmail accept. Netgsm is the frozen Türkiye SMS provider; production sending still requires API credentials, approved `msgheader`, credit, and the OTP package for Identity OTP. Do not claim handset delivery from send/otp accept. Do not invent İYS policy in the provider package.
+HumanChallenge production widget credentials. Amazon SES is the frozen transactional email provider; production sending still requires verified identity, region sandbox exit, and runtime credentials. Do not claim mailbox delivery from SendEmail accept. Netgsm is the frozen Türkiye SMS provider; production sending still requires API credentials, approved `msgheader`, credit, and the OTP package for Identity OTP. Do not claim handset delivery from send/otp accept. Do not invent İYS policy in the provider package. Push transports are implemented; live Web Push/FCM/APNs credentials are operator-owned (`LIVE_*_TEST_PENDING`). Frontend/mobile registration clients remain pending.
 
 ---
 
 ## 25. Remaining after NOTIFY-B / PROVIDER-C
 
-1. Push **vendor** selection and production adapter (launch blocker); SES email and Netgsm SMS adapters exist
-2. Push endpoint schema (000053+) after encryption/ownership review
+1. Consumer Web Push registration UI / service worker (`WEB_PUSH_FRONTEND_PENDING`)
+2. React Native FCM/APNs registration (`MOBILE_PUSH_CLIENT_PENDING`)
 3. Optional cutover of `notifications.moderation.warning` onto `notifications.intents`
 4. Saved-search match producer (needs an upstream match event)
 5. Optional İYS port **after** legal review
 6. Consumer inbox/preferences UI
-7. Operator Netgsm live send (`LIVE_NETGSM_TEST_PENDING`) and SES live send (`LIVE_SES_TEST_PENDING`)
+7. Operator live sends: `LIVE_WEBPUSH_TEST_PENDING`, `LIVE_FCM_TEST_PENDING`, `LIVE_APNS_TEST_PENDING`, `LIVE_NETGSM_TEST_PENDING`, `LIVE_SES_TEST_PENDING`

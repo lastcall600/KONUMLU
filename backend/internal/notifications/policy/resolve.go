@@ -53,22 +53,22 @@ func catalogCategoryDefault(cat Category) bool {
 }
 
 type IntentInput struct {
-	RecipientUserID         string
-	EventType               EventType
-	DomainRef               string
-	ActorRef                string
-	ResourceRef             string
-	LocaleHint              string
-	Variables               map[string]string
-	CreatedAt               time.Time
-	Account                 AccountState
-	Destinations            DestinationState
-	Preferences             PreferenceDocument
-	Consents                []ConsentSnapshot
-	AlreadySeen             bool
-	RequestedChannels       []Channel
-	PreferenceLookupFailed  bool
-	ConsentLookupFailed     bool
+	RecipientUserID        string
+	EventType              EventType
+	DomainRef              string
+	ActorRef               string
+	ResourceRef            string
+	LocaleHint             string
+	Variables              map[string]string
+	CreatedAt              time.Time
+	Account                AccountState
+	Destinations           DestinationState
+	Preferences            PreferenceDocument
+	Consents               []ConsentSnapshot
+	AlreadySeen            bool
+	RequestedChannels      []Channel
+	PreferenceLookupFailed bool
+	ConsentLookupFailed    bool
 }
 
 type ChannelDecision struct {

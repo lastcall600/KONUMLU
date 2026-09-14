@@ -273,7 +273,7 @@ func TestMutationRequiresCSRFAndOrigin(t *testing.T) {
 func TestUnknownKeysAndUserIDRejected(t *testing.T) {
 	h := testHandler(t, mustID(t), mustID(t), newMemConsumer())
 	rec := do(t, h, http.MethodPatch, "/v1/notification-preferences", allowedOrigin, map[string]any{
-		"userId": "other",
+		"userId":    "other",
 		"overrides": []map[string]any{{"channel": "email", "scopeType": "channel", "scopeKey": "*", "enabled": false}},
 	}, authed("a"), withCSRF())
 	if rec.Code != http.StatusBadRequest {
@@ -454,7 +454,9 @@ func TestPushEndpointHTTPSecurity(t *testing.T) {
 		t.Fatalf("list a = %s", rec.Body.String())
 	}
 	var listed struct {
-		Endpoints []struct{ ID string `json:"id"` }
+		Endpoints []struct {
+			ID string `json:"id"`
+		}
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil || len(listed.Endpoints) != 1 {
 		t.Fatalf("list decode %s", rec.Body.String())

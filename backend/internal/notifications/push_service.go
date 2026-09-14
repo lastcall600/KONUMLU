@@ -138,26 +138,17 @@ func (s *EndpointService) HasActive(ctx context.Context, userID ID, ch policy.Ch
 	return s.store.HasActivePushEndpoint(ctx, userID, ch)
 }
 
-func (s *EndpointService) DispatchTargets(ctx context.Context, userID ID, ch policy.Channel) ([]PushSendRequest, error) {
-	rows, err := s.store.ListActivePushForDispatch(ctx, userID, ch)
-	if err != nil {
-		return nil, err
+func (s *EndpointService) ListDispatchRows(ctx context.Context, userID ID, ch policy.Channel) ([]PushEndpointRecord, error) {
+	return s.store.ListActivePushForDispatch(ctx, userID, ch)
+}
+
+// OpenDispatchMaterial decrypts one endpoint just-in-time. The plaintext must
+// not be persisted or logged. Callers must drop the value after Send.
+func (s *EndpointService) OpenDispatchMaterial(row PushEndpointRecord) (PushProviderMaterial, error) {
+	if s == nil {
+		return PushProviderMaterial{}, errUnavailable
 	}
-	out := make([]PushSendRequest, 0, len(rows))
-	for _, row := range rows {
-		mat, err := s.openRow(row)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, PushSendRequest{
-			EndpointID: row.ID,
-			Channel:    row.Channel,
-			Platform:   row.Platform,
-			Provider:   row.Provider,
-			Material:   mat,
-		})
-	}
-	return out, nil
+	return s.openRow(row)
 }
 
 func (s *EndpointService) sealAndRefresh(ctx context.Context, existing PushEndpointRecord, userID ID, in PushRegistration, now time.Time) (PushEndpointView, error) {

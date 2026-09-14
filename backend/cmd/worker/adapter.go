@@ -7,6 +7,9 @@ import (
 	"backend/internal/identity"
 	emailses "backend/internal/infrastructure/email/ses"
 	notifyinfra "backend/internal/infrastructure/notifications"
+	pushapns "backend/internal/infrastructure/push/apns"
+	pushfcm "backend/internal/infrastructure/push/fcm"
+	pushweb "backend/internal/infrastructure/push/webpush"
 	netsms "backend/internal/infrastructure/sms/netgsm"
 	objstorage "backend/internal/infrastructure/storage"
 	"backend/internal/listings"
@@ -15,6 +18,7 @@ import (
 	"backend/internal/needs"
 	"backend/internal/notifications"
 	"backend/internal/platform/config"
+	platcrypto "backend/internal/platform/crypto"
 	"backend/internal/platform/db"
 	"backend/internal/reviewaggregates"
 	"backend/internal/search"
@@ -32,15 +36,19 @@ type notificationsWiring struct {
 	SMS          notifications.SMSSender
 	ChannelEmail notifications.ChannelSender
 	ChannelSMS   notifications.ChannelSender
+	PushWeb      notifications.PushSender
+	PushFCM      notifications.PushSender
+	PushAPNs     notifications.PushSender
 }
 
-func productionNotificationTransports(cfg config.Config) (notifyinfra.Transports, notifications.ChannelSender, notifications.ChannelSender, error) {
+func productionNotificationTransports(cfg config.Config) (notifyinfra.Transports, notifications.ChannelSender, notifications.ChannelSender, notifications.PushSender, notifications.PushSender, notifications.PushSender, error) {
 	var tr notifyinfra.Transports
 	var emailCh, smsCh notifications.ChannelSender
+	var web, fcm, apns notifications.PushSender
 
 	if cfg.NotificationsEmailMode == config.NotificationChannelExternal {
 		if !cfg.Email.SESWired() {
-			return notifyinfra.Transports{}, nil, nil, notifyinfra.ErrEmailAdapterRequired
+			return notifyinfra.Transports{}, nil, nil, nil, nil, nil, notifyinfra.ErrEmailAdapterRequired
 		}
 		ses, err := emailses.New(context.Background(), emailses.Config{
 			Region:  cfg.Email.Region,
@@ -48,15 +56,15 @@ func productionNotificationTransports(cfg config.Config) (notifyinfra.Transports
 			Timeout: cfg.Email.Timeout,
 		})
 		if err != nil {
-			return notifyinfra.Transports{}, nil, nil, err
+			return notifyinfra.Transports{}, nil, nil, nil, nil, nil, err
 		}
 		client, err := emailses.NewVerificationClient(ses)
 		if err != nil {
-			return notifyinfra.Transports{}, nil, nil, err
+			return notifyinfra.Transports{}, nil, nil, nil, nil, nil, err
 		}
 		channel, err := emailses.NewChannelClient(ses)
 		if err != nil {
-			return notifyinfra.Transports{}, nil, nil, err
+			return notifyinfra.Transports{}, nil, nil, nil, nil, nil, err
 		}
 		tr.Email = client
 		emailCh = channel
@@ -64,7 +72,7 @@ func productionNotificationTransports(cfg config.Config) (notifyinfra.Transports
 
 	if cfg.NotificationsSMSMode == config.NotificationChannelExternal {
 		if !cfg.SMS.NetgsmWired() {
-			return notifyinfra.Transports{}, nil, nil, notifyinfra.ErrSMSAdapterRequired
+			return notifyinfra.Transports{}, nil, nil, nil, nil, nil, notifyinfra.ErrSMSAdapterRequired
 		}
 		ng, err := netsms.New(netsms.Config{
 			Username:  cfg.SMS.Username,
@@ -73,37 +81,75 @@ func productionNotificationTransports(cfg config.Config) (notifyinfra.Transports
 			Timeout:   cfg.SMS.Timeout,
 		})
 		if err != nil {
-			return notifyinfra.Transports{}, nil, nil, err
+			return notifyinfra.Transports{}, nil, nil, nil, nil, nil, err
 		}
 		otp, err := netsms.NewOTPClient(ng)
 		if err != nil {
-			return notifyinfra.Transports{}, nil, nil, err
+			return notifyinfra.Transports{}, nil, nil, nil, nil, nil, err
 		}
 		channel, err := netsms.NewChannelClient(ng)
 		if err != nil {
-			return notifyinfra.Transports{}, nil, nil, err
+			return notifyinfra.Transports{}, nil, nil, nil, nil, nil, err
 		}
 		tr.SMS = otp
 		smsCh = channel
 	}
 
-	return tr, emailCh, smsCh, nil
+	if cfg.WebPush.Wired() {
+		t, err := pushweb.New(pushweb.Config{
+			PublicKey:  cfg.WebPush.PublicKey,
+			PrivateKey: cfg.WebPush.PrivateKey,
+			Subject:    cfg.WebPush.Subject,
+			Timeout:    cfg.WebPush.Timeout,
+		})
+		if err != nil {
+			return notifyinfra.Transports{}, nil, nil, nil, nil, nil, err
+		}
+		web = t
+	}
+	if cfg.FCM.Wired() {
+		t, err := pushfcm.New(context.Background(), pushfcm.Config{
+			ProjectID:       cfg.FCM.ProjectID,
+			CredentialsFile: cfg.FCM.CredentialsFile,
+			Timeout:         cfg.FCM.Timeout,
+		})
+		if err != nil {
+			return notifyinfra.Transports{}, nil, nil, nil, nil, nil, err
+		}
+		fcm = t
+	}
+	if cfg.APNs.Wired() {
+		t, err := pushapns.New(pushapns.Config{
+			TeamID:      cfg.APNs.TeamID,
+			KeyID:       cfg.APNs.KeyID,
+			Topic:       cfg.APNs.Topic,
+			PrivateKey:  cfg.APNs.PrivateKey,
+			Environment: cfg.APNs.Environment,
+			Timeout:     cfg.APNs.Timeout,
+		})
+		if err != nil {
+			return notifyinfra.Transports{}, nil, nil, nil, nil, nil, err
+		}
+		apns = t
+	}
+
+	return tr, emailCh, smsCh, web, fcm, apns, nil
 }
 
-func bindNotificationSenders(cfg config.Config) (notifications.EmailSender, notifications.SMSSender, notifications.ChannelSender, notifications.ChannelSender, error) {
-	transports, emailCh, smsCh, err := productionNotificationTransports(cfg)
+func bindNotificationSenders(cfg config.Config) (notifications.EmailSender, notifications.SMSSender, notifications.ChannelSender, notifications.ChannelSender, notifications.PushSender, notifications.PushSender, notifications.PushSender, error) {
+	transports, emailCh, smsCh, web, fcm, apns, err := productionNotificationTransports(cfg)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, err
 	}
 	senders, err := notifyinfra.Bind(cfg.NotificationsEmailMode, cfg.NotificationsSMSMode, transports)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, err
 	}
-	return senders.Email, senders.SMS, emailCh, smsCh, nil
+	return senders.Email, senders.SMS, emailCh, smsCh, web, fcm, apns, nil
 }
 
 func productionNotificationsWiring(cfg config.Config, resolver notifications.VerificationMaterialResolver) (notificationsWiring, error) {
-	email, sms, emailCh, smsCh, err := bindNotificationSenders(cfg)
+	email, sms, emailCh, smsCh, web, fcm, apns, err := bindNotificationSenders(cfg)
 	if err != nil {
 		return notificationsWiring{}, err
 	}
@@ -113,6 +159,40 @@ func productionNotificationsWiring(cfg config.Config, resolver notifications.Ver
 		SMS:          sms,
 		ChannelEmail: emailCh,
 		ChannelSMS:   smsCh,
+		PushWeb:      web,
+		PushFCM:      fcm,
+		PushAPNs:     apns,
+	}, nil
+}
+
+func newPushDispatch(cfg config.Config, store *notifications.PostgresStore, wiring notificationsWiring) (*notifications.PushDispatch, error) {
+	if wiring.PushWeb == nil && wiring.PushFCM == nil && wiring.PushAPNs == nil {
+		return nil, nil
+	}
+	if !cfg.PushEndpoints.Enabled {
+		return nil, notifications.ErrProviderUnconfigured
+	}
+	kr, err := platcrypto.NewSingleKey(cfg.PushEndpoints.EncryptionKey)
+	if err != nil {
+		return nil, err
+	}
+	aead, err := platcrypto.NewAEAD(kr)
+	if err != nil {
+		return nil, err
+	}
+	hmacKey, err := platcrypto.NewHMACKey(cfg.PushEndpoints.HashKey)
+	if err != nil {
+		return nil, err
+	}
+	endpoints, err := notifications.NewEndpointService(store, aead, hmacKey, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &notifications.PushDispatch{
+		Web:       wiring.PushWeb,
+		FCM:       wiring.PushFCM,
+		APNs:      wiring.PushAPNs,
+		Endpoints: endpoints,
 	}, nil
 }
 

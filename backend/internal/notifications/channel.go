@@ -10,17 +10,19 @@ import (
 )
 
 var (
-	errProviderRetryable    = errors.New("notification provider retryable")
-	errProviderPermanent    = errors.New("notification provider permanent")
-	errProviderTimeout      = errors.New("notification provider timeout")
-	errProviderUnconfigured = errors.New("notification provider unconfigured")
+	errProviderRetryable       = errors.New("notification provider retryable")
+	errProviderPermanent       = errors.New("notification provider permanent")
+	errProviderTimeout         = errors.New("notification provider timeout")
+	errProviderUnconfigured    = errors.New("notification provider unconfigured")
+	errProviderEndpointInvalid = errors.New("notification provider endpoint invalid")
 )
 
 var (
-	ErrProviderRetryable    = errProviderRetryable
-	ErrProviderPermanent    = errProviderPermanent
-	ErrProviderTimeout      = errProviderTimeout
-	ErrProviderUnconfigured = errProviderUnconfigured
+	ErrProviderRetryable       = errProviderRetryable
+	ErrProviderPermanent       = errProviderPermanent
+	ErrProviderTimeout         = errProviderTimeout
+	ErrProviderUnconfigured    = errProviderUnconfigured
+	ErrProviderEndpointInvalid = errProviderEndpointInvalid
 )
 
 const (
@@ -91,7 +93,7 @@ func ClassifyProviderError(err error) (errorClass string, retryable, giveUp bool
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, errProviderTimeout) {
 		return ErrorClassTimeout, true, false
 	}
-	if errors.Is(err, errProviderPermanent) {
+	if errors.Is(err, errProviderPermanent) || errors.Is(err, errProviderEndpointInvalid) {
 		return ErrorClassPermanent, false, true
 	}
 	if errors.Is(err, errProviderUnconfigured) {

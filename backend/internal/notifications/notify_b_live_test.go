@@ -321,9 +321,9 @@ func TestLivePollLoopSoak(t *testing.T) {
 	if sender.Calls() < 5 {
 		t.Fatalf("dispatch calls=%d", sender.Calls())
 	}
-	processing, err := store.CountChannelState(context.Background(), policy.DeliveryProcessing)
-	if err != nil || processing != 0 {
-		t.Fatalf("stuck processing=%d err=%v", processing, err)
+	processing := countUserChannelState(t, store, user, policy.DeliveryProcessing)
+	if processing != 0 {
+		t.Fatalf("stuck processing=%d", processing)
 	}
 }
 
@@ -553,9 +553,9 @@ func TestLiveBoundedThroughput(t *testing.T) {
 	if sender.Calls() != n || claimed != n {
 		t.Fatalf("throughput calls=%d claimed=%d want=%d", sender.Calls(), claimed, n)
 	}
-	processing, err := store.CountChannelState(ctx, policy.DeliveryProcessing)
-	if err != nil || processing != 0 {
-		t.Fatalf("stuck processing=%d err=%v", processing, err)
+	processing := countUserChannelState(t, store, user, policy.DeliveryProcessing)
+	if processing != 0 {
+		t.Fatalf("stuck processing=%d", processing)
 	}
 }
 
@@ -565,6 +565,19 @@ type liveAccountDest struct {
 
 func (d *liveAccountDest) ReadNotificationEligibility(_ context.Context, _ identitycontracts.ID) (identitycontracts.NotificationEligibility, error) {
 	return identitycontracts.NotificationEligibility{EmailVerified: d.email, Disabled: d.disabled}, nil
+}
+
+func countUserChannelState(t *testing.T, store *PostgresStore, user ID, state policy.DeliveryState) int {
+	t.Helper()
+	row := store.db.QueryRow(context.Background(), `
+		SELECT COUNT(*) FROM notifications.channel_deliveries d
+		JOIN notifications.intents i ON i.id = d.intent_id
+		WHERE i.recipient_user_id = $1 AND d.state = $2`, user, string(state))
+	var n int
+	if err := row.Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
 }
 
 func intentIDForDomain(t *testing.T, store *PostgresStore, user ID, domainRef string) ID {

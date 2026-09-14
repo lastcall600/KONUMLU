@@ -9,19 +9,19 @@ import (
 )
 
 type PushEndpointRecord struct {
-	ID          ID
-	UserID      ID
-	Channel     policy.Channel
-	Platform    PushPlatform
-	Provider    PushProvider
-	Hash        []byte
-	KeyID       string
-	Nonce       []byte
-	Ciphertext  []byte
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-	LastSeenAt  time.Time
-	RevokedAt   *time.Time
+	ID         ID
+	UserID     ID
+	Channel    policy.Channel
+	Platform   PushPlatform
+	Provider   PushProvider
+	Hash       []byte
+	KeyID      string
+	Nonce      []byte
+	Ciphertext []byte
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+	LastSeenAt time.Time
+	RevokedAt  *time.Time
 }
 
 func (PushEndpointRecord) String() string   { return "notifications.PushEndpointRecord" }
@@ -78,8 +78,34 @@ type PushSender interface {
 }
 
 type PushDispatch struct {
-	Sender    PushSender
+	Web       PushSender
+	FCM       PushSender
+	APNs      PushSender
 	Endpoints *EndpointService
+}
+
+func (p *PushDispatch) sender(provider PushProvider) PushSender {
+	if p == nil {
+		return nil
+	}
+	switch provider {
+	case PushProviderWebPush:
+		return p.Web
+	case PushProviderFCM:
+		return p.FCM
+	case PushProviderAPNs:
+		return p.APNs
+	default:
+		return nil
+	}
+}
+
+func (p *PushDispatch) webConfigured() bool {
+	return p != nil && p.Web != nil
+}
+
+func (p *PushDispatch) mobileConfigured() bool {
+	return p != nil && (p.FCM != nil || p.APNs != nil)
 }
 
 func SafePushPayload(templateKey, domainRef, category string) PushPublicPayload {
