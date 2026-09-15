@@ -84,7 +84,8 @@
 - [x] 0B-29 — Identity session hot cache (Valkey keyed by session token SHA-256; PostgreSQL SoT; miss rehydrate; fail-open to PostgreSQL when Valkey is down)
 - [x] 0B-31 — Password reset / recovery foundation (`POST /v1/auth/password/reset/start|verify|complete`; hash-only `identity.password_reset_proofs`; session revoke + `session_epoch`; no auto-login)
 - [x] 0B-32 — Consumer web scaffold (`web/apps/consumer`; Next.js App Router, TypeScript strict; placeholder home only; no auth UI / listings / admin)
-- [x] Consumer design-token foundation (`web/apps/consumer/styles/tokens.css` + `lib/theme`; Figma-canonical semantic CSS custom properties; primitives not for component use; 48 components not built)
+- [x] Consumer design-token foundation (`web/apps/consumer/styles/tokens.css` + `lib/theme`; Figma-canonical semantic CSS custom properties; primitives not for component use)
+- [x] Consumer UI Batch 1 control foundation (`web/apps/consumer/components/ui`; Button, IconButton, InputField, Checkbox, Radio, Switch, SelectField, FormField; remaining inventory components not built; screens not migrated)
 - [x] 0B-33 — Admin web scaffold (`web/apps/admin`; Next.js App Router, TypeScript strict; Management Center shell + dashboard placeholder; no Staff IAM / 360 / domain APIs)
 - [x] 0B-34 — Consumer login UI (`/giris`; password + passkey against existing Identity HTTP; cookie session + CSRF logout; no signup/reset/profile)
 - [x] 0B-35 — Consumer signup UI (`/kayit`; identifier → verification → complete against existing Identity HTTP; in-memory challenge/proof only; optional password fallback; cookie session; no passkey registration during signup)
@@ -172,7 +173,7 @@
 
 **Group 5 — Architecture gate review (0A-32):** ✅ PASS — V1 blocking gates none; G-06 deferred V1.5 / non-blocking
 
-**Product / UI handoff (documentation):** ✅ [docs/product/PRODUCT-UI-HANDOFF.md](./docs/product/PRODUCT-UI-HANDOFF.md) is the authoritative Product → Figma → Frontend contract (screen inventory, state matrices, component inventory). It does not open new architecture foundations or provider integrations. Consumer semantic design tokens live in `web/apps/consumer/styles/tokens.css` + `lib/theme` (Figma-canonical names/aliases; READY_FOR_REVIEW; 48 components not built).
+**Product / UI handoff (documentation):** ✅ [docs/product/PRODUCT-UI-HANDOFF.md](./docs/product/PRODUCT-UI-HANDOFF.md) is the authoritative Product → Figma → Frontend contract (screen inventory, state matrices, component inventory). It does not open new architecture foundations or provider integrations. Consumer semantic design tokens live in `web/apps/consumer/styles/tokens.css` + `lib/theme` (Figma-canonical names/aliases; READY_FOR_REVIEW). Consumer Batch 1 controls live in `web/apps/consumer/components/ui` (READY_FOR_REVIEW; remaining inventory components not built; existing screens not migrated).
 
 ---
 

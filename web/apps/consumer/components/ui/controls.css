@@ -1,0 +1,440 @@
+/*
+  Batch 1 consumer control styles.
+  Consume semantic tokens from styles/tokens.css only.
+  Do not use --palette-* or raw hex in this file.
+*/
+
+.ui-button,
+.ui-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-8);
+  margin: 0;
+  border-style: solid;
+  border-width: 1px;
+  border-radius: var(--radius-control);
+  font-family: inherit;
+  font-size: var(--font-size-label);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--font-line-height-tight);
+  letter-spacing: var(--font-letter-spacing-normal);
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-easing-standard),
+    border-color var(--motion-duration-fast) var(--motion-easing-standard),
+    color var(--motion-duration-fast) var(--motion-easing-standard);
+}
+
+.ui-button {
+  inline-size: fit-content;
+  max-inline-size: 100%;
+  padding-inline: var(--space-16);
+}
+
+.ui-button--full {
+  inline-size: 100%;
+}
+
+.ui-button--small {
+  block-size: 36px;
+  padding-inline: var(--space-12);
+}
+
+.ui-button--medium {
+  block-size: 44px;
+}
+
+.ui-button--large {
+  block-size: 52px;
+  padding-inline: var(--space-20);
+}
+
+.ui-button--primary,
+.ui-icon-button--primary {
+  background: var(--color-action-primary);
+  border-color: var(--color-action-primary);
+  color: var(--color-text-inverse);
+}
+
+.ui-button--secondary,
+.ui-icon-button--secondary {
+  background: var(--color-action-secondary);
+  border-color: var(--color-border-default);
+  color: var(--color-text-default);
+}
+
+.ui-icon-button--ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--color-text-default);
+}
+
+.ui-button:disabled,
+.ui-icon-button:disabled {
+  background: var(--color-action-disabled);
+  border-color: var(--color-action-disabled);
+  color: var(--color-text-disabled);
+  cursor: not-allowed;
+}
+
+.ui-icon-button--ghost:disabled {
+  background: transparent;
+  border-color: transparent;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .ui-button--primary:hover:not(:disabled),
+  .ui-icon-button--primary:hover:not(:disabled) {
+    background: var(--color-action-primary-hover);
+    border-color: var(--color-action-primary-hover);
+  }
+
+  .ui-button--secondary:hover:not(:disabled),
+  .ui-icon-button--secondary:hover:not(:disabled) {
+    background: var(--color-action-secondary-hover);
+    border-color: var(--color-border-strong);
+  }
+
+  .ui-icon-button--ghost:hover:not(:disabled) {
+    background: var(--color-surface-interactive-hover);
+  }
+}
+
+.ui-button--primary:active:not(:disabled),
+.ui-icon-button--primary:active:not(:disabled) {
+  background: var(--color-action-primary-pressed);
+  border-color: var(--color-action-primary-pressed);
+}
+
+.ui-button--secondary:active:not(:disabled),
+.ui-icon-button--secondary:active:not(:disabled) {
+  background: var(--color-action-secondary-hover);
+  border-color: var(--color-border-strong);
+}
+
+.ui-icon-button--ghost:active:not(:disabled) {
+  background: var(--color-surface-interactive-pressed);
+}
+
+.ui-icon-button {
+  flex: 0 0 auto;
+  padding: 0;
+}
+
+.ui-icon-button__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.ui-icon-button--small {
+  inline-size: 36px;
+  block-size: 36px;
+}
+
+.ui-icon-button--medium {
+  inline-size: 44px;
+  block-size: 44px;
+}
+
+.ui-icon-button--large {
+  inline-size: 52px;
+  block-size: 52px;
+}
+
+@media (pointer: coarse) {
+  .ui-icon-button--small {
+    box-sizing: border-box;
+    inline-size: var(--size-touch-min);
+    block-size: var(--size-touch-min);
+    min-inline-size: var(--size-touch-min);
+    min-block-size: var(--size-touch-min);
+    padding: var(--space-4);
+    background-clip: content-box;
+    background-origin: content-box;
+    border-color: transparent;
+  }
+}
+
+.ui-form-field {
+  display: grid;
+  gap: var(--space-6);
+  inline-size: 100%;
+  max-inline-size: 100%;
+}
+
+.ui-form-field__label {
+  display: block;
+  color: var(--color-text-default);
+  font-size: var(--font-size-label);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--font-line-height-snug);
+}
+
+.ui-form-field__required {
+  color: var(--color-text-critical);
+  font-weight: var(--font-weight-semibold);
+}
+
+.ui-form-field__supporting {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-regular);
+  line-height: var(--font-line-height-snug);
+}
+
+.ui-form-field__error {
+  margin: 0;
+  color: var(--color-text-critical);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--font-line-height-snug);
+}
+
+.ui-form-field--locked .ui-form-field__control {
+  border-radius: var(--radius-control);
+}
+
+.ui-form-field--locked .ui-input,
+.ui-form-field--locked .ui-select {
+  background: var(--color-surface-subtle);
+  border-color: var(--color-border-strong);
+  color: var(--color-text-secondary);
+}
+
+.ui-form-field--locked .ui-select {
+  display: flex;
+  align-items: center;
+}
+
+.ui-input,
+.ui-select {
+  display: block;
+  inline-size: 100%;
+  max-inline-size: 100%;
+  margin: 0;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-default);
+  color: var(--color-text-default);
+  font-family: inherit;
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-regular);
+  line-height: var(--font-line-height-body);
+  padding-inline: var(--space-12);
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-easing-standard),
+    border-color var(--motion-duration-fast) var(--motion-easing-standard);
+}
+
+.ui-input--medium,
+.ui-select--medium {
+  block-size: 44px;
+}
+
+.ui-input--large,
+.ui-select--large {
+  block-size: 52px;
+}
+
+.ui-input[placeholder]:not(:placeholder-shown) {
+  border-color: var(--color-border-strong);
+}
+
+.ui-form-field--invalid .ui-input,
+.ui-form-field--invalid .ui-select,
+.ui-input[aria-invalid="true"],
+.ui-select[aria-invalid="true"] {
+  border-color: var(--color-border-critical);
+  background: var(--color-status-error-surface);
+}
+
+.ui-input:disabled,
+.ui-select:disabled {
+  background: var(--color-surface-disabled);
+  border-color: var(--color-border-disabled);
+  color: var(--color-text-disabled);
+  cursor: not-allowed;
+}
+
+.ui-choice {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-block-size: 36px;
+  color: var(--color-text-default);
+  font-size: var(--font-size-label);
+  font-weight: var(--font-weight-regular);
+  line-height: var(--font-line-height-snug);
+  cursor: pointer;
+}
+
+.ui-choice--switch {
+  min-block-size: 40px;
+}
+
+.ui-choice__text {
+  color: inherit;
+}
+
+.ui-checkbox,
+.ui-radio {
+  appearance: none;
+  flex: 0 0 auto;
+  margin: 0;
+  inline-size: 20px;
+  block-size: 20px;
+  border: 2px solid var(--color-border-strong);
+  background: var(--color-surface-default);
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-easing-standard),
+    border-color var(--motion-duration-fast) var(--motion-easing-standard);
+}
+
+.ui-checkbox {
+  border-radius: var(--radius-control);
+}
+
+.ui-radio {
+  border-radius: var(--radius-full);
+}
+
+.ui-checkbox::after,
+.ui-radio::after {
+  content: "";
+  display: block;
+}
+
+.ui-checkbox:checked,
+.ui-checkbox:indeterminate {
+  background: var(--color-action-primary);
+  border-color: var(--color-action-primary);
+}
+
+.ui-checkbox:checked::after {
+  inline-size: 5px;
+  block-size: 9px;
+  border-inline-end: 2px solid var(--color-text-inverse);
+  border-block-end: 2px solid var(--color-text-inverse);
+  transform: rotate(45deg);
+}
+
+.ui-checkbox:indeterminate::after {
+  inline-size: 10px;
+  block-size: 2px;
+  border: 0;
+  background: var(--color-text-inverse);
+  transform: none;
+}
+
+.ui-radio:checked {
+  border-color: var(--color-action-primary);
+}
+
+.ui-radio:checked::after {
+  inline-size: 10px;
+  block-size: 10px;
+  border-radius: var(--radius-full);
+  background: var(--color-action-primary);
+}
+
+.ui-switch {
+  appearance: none;
+  flex: 0 0 auto;
+  position: relative;
+  margin: 0;
+  inline-size: var(--size-touch-min);
+  block-size: 24px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--color-border-strong);
+  cursor: pointer;
+  transition: background-color var(--motion-duration-fast) var(--motion-easing-standard);
+}
+
+.ui-switch::before {
+  content: "";
+  position: absolute;
+  inset-block-start: var(--space-2);
+  inset-inline-start: var(--space-2);
+  inline-size: 20px;
+  block-size: 20px;
+  border-radius: var(--radius-full);
+  background: var(--color-surface-default);
+  transition: inset-inline-start var(--motion-duration-fast) var(--motion-easing-standard);
+}
+
+.ui-switch:checked {
+  background: var(--color-action-primary);
+}
+
+.ui-switch:checked::before {
+  inset-inline-start: calc(100% - var(--space-2) - 20px);
+}
+
+.ui-checkbox:disabled,
+.ui-radio:disabled,
+.ui-switch:disabled {
+  background: var(--color-action-disabled);
+  border-color: var(--color-action-disabled);
+  cursor: not-allowed;
+}
+
+.ui-checkbox:disabled:checked::after,
+.ui-checkbox:disabled:indeterminate::after {
+  border-color: var(--color-text-disabled);
+  background: var(--color-text-disabled);
+}
+
+.ui-radio:disabled:checked::after {
+  background: var(--color-text-disabled);
+}
+
+.ui-switch:disabled::before {
+  background: var(--color-surface-disabled);
+}
+
+.ui-choice:has(:disabled) {
+  color: var(--color-text-disabled);
+  cursor: not-allowed;
+}
+
+.ui-button:focus-visible,
+.ui-icon-button:focus-visible,
+.ui-input:focus-visible,
+.ui-select:focus-visible,
+.ui-checkbox:focus-visible,
+.ui-radio:focus-visible,
+.ui-switch:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+@media (pointer: coarse) {
+  .ui-choice,
+  .ui-choice--switch {
+    min-block-size: var(--size-touch-min);
+  }
+}
+
+@media (forced-colors: active) {
+  .ui-checkbox,
+  .ui-radio,
+  .ui-switch {
+    appearance: auto;
+  }
+
+  .ui-checkbox::after,
+  .ui-radio::after,
+  .ui-switch::before {
+    display: none;
+  }
+}
